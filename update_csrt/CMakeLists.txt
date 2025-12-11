@@ -25,6 +25,7 @@ include_directories(
 
 # Source files
 set(SOURCES
+    src/HOGExtractor.cpp
     src/DeepFeatureExtractor.cpp
     src/CorrProjection.cpp
     src/AdaptiveGating.cpp
@@ -32,13 +33,13 @@ set(SOURCES
     src/SpatialReliability.cpp
     src/ChannelReliability.cpp
     src/DCFSolver.cpp
-    src/RescueStrategy.cpp
     src/UpdatedCSRTTracker.cpp
 )
 
 # Header files
 set(HEADERS
     inc/Config.hpp
+    inc/HOGExtractor.hpp
     inc/DeepFeatureExtractor.hpp
     inc/CorrProjection.hpp
     inc/AdaptiveGating.hpp
@@ -46,7 +47,6 @@ set(HEADERS
     inc/SpatialReliability.hpp
     inc/ChannelReliability.hpp
     inc/DCFSolver.hpp
-    inc/RescueStrategy.hpp
     inc/UpdatedCSRTTracker.hpp
 )
 

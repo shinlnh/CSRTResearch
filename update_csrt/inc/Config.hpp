@@ -17,7 +17,21 @@ namespace update_csrt {
  * - Loss weights and constraints
  */
 struct Config {
-    // ==================== Deep Feature Parameters ====================
+    // ==================== Traditional CSRT (HOG Branch) ====================
+    
+    // HOG feature parameters
+    int hog_orientations = 9;                 // Number of HOG orientation bins
+    int hog_cell_size = 4;                    // HOG cell size in pixels
+    int hog_block_size = 2;                   // HOG block size (cells)
+    bool hog_use_signed = false;              // Use signed gradients
+    
+    // ColorNames parameters  
+    int colornames_channels = 10;             // ColorNames feature channels
+    
+    // Total CSRT channels = HOG + ColorNames
+    int csrt_feature_channels = 31;           // 21 (HOG) + 10 (ColorNames)
+    
+    // ==================== Deep Feature Branch (VGG16) ====================
     
     // Backbone network settings
     std::string backbone = "vgg16";           // Feature extraction backbone
@@ -37,7 +51,7 @@ struct Config {
     
     // ==================== DCF Filter Parameters ====================
     
-    int num_channels = 31;                    // Output correlation filter channels
+    int num_channels = 31;                    // Output correlation filter channels (both branches)
     float learning_rate = 0.025f;             // Filter update learning rate
     float regularization = 1e-4f;             // Tikhonov regularization λ
     
@@ -59,26 +73,20 @@ struct Config {
     
     float mask_threshold = 0.5f;              // Response threshold for mask
     int mask_morph_size = 5;                  // Morphological kernel size
-    bool use_deep_mask = true;                // Use deep features for mask
+    bool use_deep_mask = false;               // Use deep features for mask (experimental)
     
     // ==================== Spatial Reliability ====================
     
     int spatial_bins = 16;                    // Spatial grid bins (16x16)
     float spatial_sigma = 0.5f;               // Gaussian falloff σ
-    bool learn_spatial_weights = true;        // Learn from deep features
+    bool learn_spatial_weights = false;       // Learn from deep features (not implemented)
     
     // ==================== Channel Reliability ====================
     
     bool use_channel_weights = true;          // Enable channel weighting
-    bool learn_channel_weights = true;        // Learn from deep features
+    bool learn_channel_weights = false;       // Learn from deep features (not implemented)
     float channel_reg = 0.01f;                // Channel weight regularization
     
-    // ==================== Rescue Strategy ====================
-    
-    bool use_rescue = true;                   // Enable failure recovery
-    float rescue_threshold = 0.15f;           // PSR threshold for rescue
-    int rescue_history_size = 10;             // History buffer size
-    float rescue_similarity_threshold = 0.7f; // Deep feature similarity
     
     // ==================== Loss Weights (for training reference) ====================
     

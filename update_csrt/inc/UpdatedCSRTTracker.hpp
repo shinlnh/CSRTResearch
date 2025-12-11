@@ -3,28 +3,25 @@
 
 #include <opencv2/opencv.hpp>
 #include "Config.hpp"
+#include "HOGExtractor.hpp"
 #include "DeepFeatureExtractor.hpp"
 #include "CorrProjection.hpp"
 #include "AdaptiveGating.hpp"
 #include "MaskGenerator.hpp"
-#include "SpatialReliability.hpp"
-#include "ChannelReliability.hpp"
 #include "DCFSolver.hpp"
-#include "RescueStrategy.hpp"
 
 namespace update_csrt {
 
 /**
  * @brief Updated CSRT Tracker with Deep Features
  * 
- * Integrates all components:
- * - Deep feature extraction (VGG16)
- * - CorrProject network for feature projection
- * - Adaptive gating for filter blending
- * - Binary mask generation from deep features
- * - Spatial and channel reliability maps
- * - ADMM-based DCF solver with constraints
- * - Rescue strategy for failure recovery
+ * Dual-branch architecture:
+ * 1. Traditional CSRT branch: HOG → DCF → h_csrt
+ * 2. Deep feature branch: VGG16 → CorrProject → h_deep
+ * 3. Adaptive blending: h_final = α·h_csrt + (1-α)·h_deep
+ * 
+ * Key innovation: Apply binary mask m to deep features BEFORE projection:
+ *   f_masked = f ⊙ m  (element-wise multiplication)
  */
 class UpdatedCSRTTracker {
 public:
@@ -89,30 +86,45 @@ private:
     Config config_;
     bool initialized_;
     
-    // Components
-    std::unique_ptr<DeepFeatureExtractor> feature_extractor_;
+    // ========== Components ==========
+    
+    // Traditional CSRT branch
+    std::unique_ptr<HOGExtractor> hog_extractor_;
+    
+    // Deep feature branch
+    std::unique_ptr<DeepFeatureExtractor> deep_extractor_;
     std::unique_ptr<CorrProjection> corr_projection_;
+    
+    // Shared components
     std::unique_ptr<AdaptiveGating> adaptive_gating_;
     std::unique_ptr<MaskGenerator> mask_generator_;
-    std::unique_ptr<SpatialReliability> spatial_reliability_;
-    std::unique_ptr<ChannelReliability> channel_reliability_;
     std::unique_ptr<DCFSolver> dcf_solver_;
-    std::unique_ptr<RescueStrategy> rescue_strategy_;
     
-    // State variables
+    // ========== State variables ==========
+    
     cv::Rect current_bbox_;
     cv::Mat template_img_;
-    cv::Mat template_features_deep_;
-    cv::Mat template_features_csrt_;
-    cv::Mat h_csrt_;   // Traditional CSRT filter
-    cv::Mat h_deep_;   // Deep feature filter (projected)
-    cv::Mat h_final_;  // Blended filter
+    
+    // CSRT branch state
+    cv::Mat template_features_hog_;   // HOG+CN features (31 x H x W)
+    cv::Mat h_csrt_;                  // Traditional CSRT filter
+    
+    // Deep branch state
+    cv::Mat template_features_vgg_;   // VGG16 features (512 x H x W)
+    cv::Mat h_deep_;                  // Projected deep filter
+    
+    // Combined state
+    cv::Mat h_final_;                 // Blended filter: α·h_csrt + (1-α)·h_deep
+    cv::Mat last_mask_;               // Binary mask from CSRT response
     
     // Visualization
-    cv::Mat last_response_map_;
-    cv::Mat last_mask_;
+    cv::Mat last_response_map_csrt_;  // CSRT branch response
+    cv::Mat last_response_map_deep_;  // Deep branch response
+    cv::Mat last_response_map_;       // Final blended response
     float last_alpha_;
     float last_psr_;
+    
+    // ========== Helper methods ==========
     
     /**
      * @brief Extract template patch from frame
@@ -121,15 +133,14 @@ private:
                          const cv::Size& output_size, float padding);
     
     /**
-     * @brief Update filters with new training sample
+     * @brief Update both CSRT and deep filters
      */
     void updateFilters(const cv::Mat& frame, const cv::Rect& bbox);
     
     /**
-     * @brief Detect target in search region
+     * @brief Detect target using final blended filter
      */
-    cv::Point detectTarget(const cv::Mat& search_patch, 
-                          const cv::Mat& search_features);
+    cv::Point detectTarget(const cv::Mat& search_patch);
     
     /**
      * @brief Convert detection location to bounding box
@@ -137,6 +148,11 @@ private:
     cv::Rect detectionToBBox(const cv::Point& detection, 
                             const cv::Rect& search_region,
                             const cv::Size& template_size);
+    
+    /**
+     * @brief Compute Peak-to-Sidelobe Ratio
+     */
+    float computePSR(const cv::Mat& response_map);
 };
 
 } // namespace update_csrt
