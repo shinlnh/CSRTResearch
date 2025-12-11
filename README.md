@@ -35,3 +35,4 @@ When integrating the real detector, provide `--model <path>` instead of `--use-m
 - Export the SSD graph to a Jetson-optimized engine once the NCNN/Vulkan implementation is validated.
 - Tune the thresholds in `config::PipelineConfig` to match your hardware and environment.
 
+### Liang Yu Hui ###
