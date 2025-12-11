@@ -1,3 +1,0 @@
-E:/SourceCode/C2P/Project/CSRTResearch/build/CMakeFiles/eldercare_tracking_csrt_only.dir
-E:/SourceCode/C2P/Project/CSRTResearch/build/CMakeFiles/edit_cache.dir
-E:/SourceCode/C2P/Project/CSRTResearch/build/CMakeFiles/rebuild_cache.dir

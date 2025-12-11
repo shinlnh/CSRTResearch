@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui videoio video tracking)
 
-add_executable(eldercare_tracking_csrt_only
-    src/main_csrt_only.cpp)
+add_executable(csrtpure
+    src/main_pcsrt.cpp)
 
-target_link_libraries(eldercare_tracking_csrt_only PRIVATE ${OpenCV_LIBS})
+target_link_libraries(csrtpure PRIVATE ${OpenCV_LIBS})

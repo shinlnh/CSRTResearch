@@ -61,7 +61,7 @@ struct Args {
 };
 
 void printUsage() {
-    std::cout << "Usage: eldercare_tracking_csrt_only [options]\n"
+    std::cout << "Usage: csrtpure [options]\n"
                  "Options:\n"
                  "  --dataset-root <path>       Path to OTB100 root (default: otb100)\n"
                  "  --sequence <name>           Run a single sequence (default: run all)\n"
