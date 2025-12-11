@@ -1,38 +1,63 @@
-# Pipeline Tracking Elder Care Robot (C++)
+# 🚀 Updated CSRT Tracker (C++17 + PyTorch)
 
-This project implements the requested real-time tracking pipeline in modern C++ (C++17) with OpenCV. The code mirrors the original Python design while targeting low-latency deployments on embedded platforms such as Jetson Nano.
+![OpenCV](https://img.shields.io/badge/OpenCV-4.x-blue?logo=opencv&logoColor=white) ![C++17](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=c%2B%2B&logoColor=white) ![PyTorch](https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white)
 
-## Module Map
+🎯 Dual-branch CSRT tracker that fuses classic HOG/ColorNames with deep VGG16 features. Includes a PyTorch training pipeline to learn the CorrProject projection and Adaptive Gating, then export to ONNX for the C++ runtime.
 
-1. **Types (`include/pipeline/Types.hpp`)** - bounding-box math and `TrackingTarget` bookkeeping.
-2. **Detection (`include/detection`)** - detector interface plus the SSD/NCNN stub (`NCNNSsdDetector`) and a `StaticBoxDetector` for dry runs.
-3. **Tracking (`include/tracking`)** - CSRT wrapper (`CsrtTracker.hpp`) and bounding-box quality filters (`Quality.hpp`).
-4. **Rescue (`include/rescue/RescueStrategy.hpp`)** - ROI expansion, class filtering, IoU-based re-ranking, and re-init hooks.
-5. **Smoothing (`include/smoothing/BoxKalmanFilter.hpp`)** - Kalman-based smoothing with clamp limits on position and scale.
-6. **Pipeline (`include/pipeline/TrackingPipeline.hpp`)** - orchestrates detection, tracking, rescue, and smoothing to deliver per-frame outputs.
-7. **App (`src/main.cpp`)** - command-line entry point using a configurable GStreamer pipeline and optional live visualization.
+## ✨ Highlights
+- 🔀 **Hybrid filters**: h_csrt (HOG/CN) blended with h_deep (projected VGG16) via adaptive α.
+- 🧠 **Learned projection**: CorrProject (1×1 conv stack) maps 512→31 channels to match CSRT space.
+- 🎚️ **Adaptive gating**: ONNX gating net estimates α from context (fallback to fixed α).
+- 🧽 **Mask-aware DCF/ADMM**: spatial masks to suppress background leakage.
+- 🎥 **Real-time C++**: OpenCV DNN backend; demo binary ready to run.
+- 🧪 **Training suite**: PyTorch scripts for datasets, loss, solver, export to ONNX.
 
-All implementations live in `src/`, with the same filenames as their headers.
+## 📂 Repo Map
+```
+update_csrt/
+├─ inc/                # C++ headers (Config, trackers, extractors, solver, masks)
+├─ src/                # C++ implementations + demo main.cpp
+├─ models/             # Expected ONNX models (vgg16_conv4_3.onnx, corr_project.onnx, adaptive_gating.onnx)
+├─ checkpoints/, runs/ # PyTorch training logs/checkpoints
+├─ feature_extractor.py
+├─ corr_project.py     # CorrProject, AdaptiveGating, HybridFilter (PyTorch)
+├─ dcf_solver.py, segmentation.py, tracker.py, train.py, test.py
+└─ CMakeLists.txt      # C++ build
+```
 
-## Building
+## 🛠️ Build & Run (C++)
+Prereqs: C++17 toolchain, OpenCV built with `opencv_contrib` (for CSRT), ONNX files in `update_csrt/models/`.
+```powershell
+cmake -S update_csrt -B build
+cmake --build build --config Release
+.\build\updated_csrt_demo.exe --camera 0 --display  # example flags; adjust to your pipeline
+```
+Key C++ config: `update_csrt/inc/Config.hpp` (HOG params, α limits, ADMM, mask options, ONNX paths). Print/validate helpers are included; ensure the `use_rescue` flag referenced in `print()` exists before enabling.
 
-1. Install a C++17 toolchain and OpenCV (built with `opencv_contrib` to access CSRT).
-2. Configure and build with CMake:
-   ```powershell
-   cmake -S . -B build
-   cmake --build build
-   ```
-3. Run the demo binary, supplying your GStreamer pipeline string:
-   ```powershell
-   .\build\eldercare_tracking --camera-pipeline "<gst string>" --use-mock-detector --display
-   ```
+## 🧠 Train / Export (PyTorch)
+```powershell
+cd update_csrt
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+# Train CorrProject + gating on your data
+python train.py
+# Evaluate
+python test.py --checkpoint checkpoints/...
+# Export ONNX for C++
+python ..\export_models_to_onnx.py
+```
+Main knobs: `update_csrt/config.py` (`PCSRTConfig`) mirrors the C++ config. Dataset root defaults to `otb100/OTB-dataset/OTB100` (set `sequences` to subset if needed).
 
-When integrating the real detector, provide `--model <path>` instead of `--use-mock-detector`.
+## 🧭 Tracking Flow (C++)
+1) Extract template patch → HOG/CN + VGG16 deep features.  
+2) Apply mask, project deep features with CorrProjection ONNX.  
+3) Solve DCF/ADMM for h_csrt and h_deep; blend with α (adaptive/fixed).  
+4) For each frame: crop search region → dual responses → adaptive α → fused response peak → bbox update → filter refresh.
 
-## Next Steps
+## 📌 Notes
+- Models live under `update_csrt/models/`; adjust paths in `Config.hpp` if you relocate them.
+- If adaptive gating model is missing, the tracker falls back to fixed `alpha_default`.
+- Verbose logs and visualizations can be toggled in `Config.hpp`; Python side mirrors these in `PCSRTConfig`.
 
-- Replace the stubbed `NCNNSsdDetector::loadModel`/`detect` with the actual NCNN/Vulkan flow you plan to deploy.
-- Export the SSD graph to a Jetson-optimized engine once the NCNN/Vulkan implementation is validated.
-- Tune the thresholds in `config::PipelineConfig` to match your hardware and environment.
-
-### Liang Yu Hui ###
+Enjoy hacking on the tracker! 🎉
