@@ -1,0 +1,8 @@
+[
+{
+  "directory": "E:/SourceCode/C2P/Project/CSRTResearch/build",
+  "command": "C:\\msys64\\mingw64\\bin\\g++.exe  @CMakeFiles/eldercare_tracking_csrt_only.dir/includes_CXX.rsp -g -std=c++17 -o CMakeFiles\\eldercare_tracking_csrt_only.dir\\src\\main_csrt_only.cpp.obj -c E:\\SourceCode\\C2P\\Project\\CSRTResearch\\src\\main_csrt_only.cpp",
+  "file": "E:/SourceCode/C2P/Project/CSRTResearch/src/main_csrt_only.cpp",
+  "output": "CMakeFiles/eldercare_tracking_csrt_only.dir/src/main_csrt_only.cpp.obj"
+}
+]
