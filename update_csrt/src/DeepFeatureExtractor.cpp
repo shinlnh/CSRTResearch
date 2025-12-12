@@ -4,7 +4,7 @@
 namespace update_csrt {
 
 DeepFeatureExtractor::DeepFeatureExtractor(const Config& config)
-    : config_(config), initialized_(false), feature_size_(512, 0, 0) {
+    : config_(config), initialized_(false), feature_size_{512, 0, 0} {
     
     try {
         // Load VGG16 ONNX model using OpenCV DNN
@@ -19,20 +19,25 @@ DeepFeatureExtractor::DeepFeatureExtractor(const Config& config)
         net_.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
         net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
         
+        // Enable for dummy test (will be set to true after successful test)
+        initialized_ = true;
+        
         // Test with dummy input to get output size
         cv::Mat dummy = cv::Mat::zeros(config_.template_size, CV_8UC3);
         cv::Mat dummy_features = extract(dummy);
         
-        feature_size_.x = dummy_features.size[0];  // Channels
-        feature_size_.y = dummy_features.size[1];  // Height
-        feature_size_.z = dummy_features.size[2];  // Width
+        if (dummy_features.empty() || dummy_features.dims < 3) {
+            throw std::runtime_error("Failed to extract features from dummy input");
+        }
         
-        initialized_ = true;
+        feature_size_.channels = dummy_features.size[0];  // Channels
+        feature_size_.height = dummy_features.size[1];    // Height
+        feature_size_.width = dummy_features.size[2];     // Width
         
         std::cout << "VGG16 initialized. Feature size: " 
-                  << feature_size_.x << "x" 
-                  << feature_size_.y << "x" 
-                  << feature_size_.z << std::endl;
+                  << feature_size_.channels << "x" 
+                  << feature_size_.height << "x" 
+                  << feature_size_.width << std::endl;
                   
     } catch (const std::exception& e) {
         std::cerr << "Error initializing DeepFeatureExtractor: " << e.what() << std::endl;
@@ -71,9 +76,10 @@ cv::Mat DeepFeatureExtractor::extract(const cv::Mat& image) {
     // Preprocess image
     cv::Mat blob = preprocessImage(image);
     
-    // Forward pass
+    // Forward pass through VGG16 ONNX model
+    // ONNX has single output (no need to specify layer name)
     net_.setInput(blob);
-    cv::Mat features = net_.forward(config_.feature_layer);
+    cv::Mat features = net_.forward();  // Get default output
     
     // Output shape: (1, C, H, W) -> Squeeze batch dimension
     std::vector<int> size_vec = {features.size[1], features.size[2], features.size[3]};

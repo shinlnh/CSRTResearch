@@ -154,17 +154,45 @@ cv::Mat DCFSolver::solveUnconstrained(const cv::Mat& features, const cv::Mat& la
         filter_freq += h_c;
     }
     
-    // Average across channels
-    filter_freq /= C;
+    // Return 3D filter: (C, H, W) - per-channel filters
+    std::vector<int> filter_sizes = {C, H, W};
+    cv::Mat filter_3d(filter_sizes, CV_32F);
     
-    // IFFT to get spatial filter
-    cv::Mat filter_spatial = ifft2(filter_freq);
+    for (int c = 0; c < C; ++c) {
+        // Extract channel from features
+        cv::Range ranges[] = {cv::Range(c, c+1), cv::Range::all(), cv::Range::all()};
+        cv::Mat channel = features(ranges).clone().reshape(1, H);
+        
+        // FFT
+        cv::Mat channel_fft = fft2(channel);
+        cv::Mat conj_channel = complexConjugate(channel_fft);
+        
+        // Compute per-channel filter
+        cv::Mat numerator = complexMultiply(conj_channel, label_fft);
+        cv::Mat autocorr = complexMultiply(conj_channel, channel_fft);
+        
+        // Regularization
+        for (int y = 0; y < autocorr.rows; ++y) {
+            for (int x = 0; x < autocorr.cols; ++x) {
+                autocorr.at<cv::Vec2f>(y, x)[0] += config_.regularization;
+            }
+        }
+        
+        cv::Mat h_c_freq = complexDivide(numerator, autocorr);
+        cv::Mat h_c_spatial = ifft2(h_c_freq);
+        
+        std::vector<cv::Mat> planes;
+        cv::split(h_c_spatial, planes);
+        
+        // Copy channel to 3D output - direct memory copy
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W; ++x) {
+                filter_3d.at<float>(c, y, x) = planes[0].at<float>(y, x);
+            }
+        }
+    }
     
-    // Extract real part
-    std::vector<cv::Mat> planes;
-    cv::split(filter_spatial, planes);
-    
-    return planes[0];
+    return filter_3d;
 }
 
 cv::Mat DCFSolver::solveWithMask(const cv::Mat& features, 
@@ -191,18 +219,25 @@ cv::Mat DCFSolver::solveWithMask(const cv::Mat& features,
     }
     
     // Initialize variables
-    cv::Mat h = solveUnconstrained(features, label);  // Initial solution
+    cv::Mat h = solveUnconstrained(features, label);  // Initial solution [H,W]
     cv::Mat z = h.clone();
     cv::Mat u = cv::Mat::zeros(h.size(), CV_32F);
+    
+    std::cout << "ADMM init - h: " << h.size << ", z: " << z.size << ", u: " << u.size << std::endl;
+    std::cout << "Features: " << features.size << ", Label: " << label.size() << ", Mask: " << mask_float.size() << std::endl;
     
     // ADMM iterations
     for (int iter = 0; iter < config_.admm_iterations; ++iter) {
         // Update h: argmin ||Fh - y||² + ρ/2 ||h - z + u||²
         cv::Mat h_temp = solveUnconstrained(features, label);
+        
+        std::cout << "Iter " << iter << " - h_temp: " << h_temp.size << std::endl;
+        
         h = (h_temp + config_.admm_rho * (z - u)) / (1.0f + config_.admm_rho);
         
         // Update z: project onto mask constraint z = m⊙(h + u)
-        z = (h + u).mul(mask_float);
+        // Apply mask element-wise (both are 2D)
+        cv::multiply(h + u, mask_float, z);
         
         // Update u: u = u + h - z
         u = u + h - z;

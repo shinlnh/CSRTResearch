@@ -113,8 +113,7 @@ private:
     cv::Mat template_features_vgg_;   // VGG16 features (512 x H x W)
     cv::Mat h_deep_;                  // Projected deep filter
     
-    // Combined state
-    cv::Mat h_final_;                 // Blended filter: α·h_csrt + (1-α)·h_deep
+    // Shared state
     cv::Mat last_mask_;               // Binary mask from CSRT response
     
     // Visualization

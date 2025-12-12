@@ -156,12 +156,32 @@ bool UpdatedCSRTTracker::initialize(const cv::Mat& frame, const cv::Rect& bbox) 
     // KEY: VGG16 only sees object region, doesn't learn background!
     cv::Mat deep_masked = deep_extractor_->extractMasked(template_img_, last_mask_);
     
-    // Project to correlation filter space
-    h_deep_ = corr_projection_->forward(deep_masked);
+    // Project to correlation filter space (512→31 channels)
+    cv::Mat deep_projected = corr_projection_->forward(deep_masked);
     
-    // ========== Initial blending ==========
+    // Resize projected deep features to match CSRT spatial size for training
+    int target_h = template_features_hog_.size[1];
+    int target_w = template_features_hog_.size[2];
+    
+    // Resize each channel separately (C×H×W format)
+    int C_deep = deep_projected.size[0];
+    int H_deep = deep_projected.size[1];
+    int W_deep = deep_projected.size[2];
+    
+    std::vector<int> new_sizes = {C_deep, target_h, target_w};
+    cv::Mat deep_resized(new_sizes, CV_32F);
+    
+    for (int c = 0; c < C_deep; ++c) {
+        cv::Mat channel(H_deep, W_deep, CV_32F, deep_projected.ptr<float>(c));
+        cv::Mat channel_resized(target_h, target_w, CV_32F, deep_resized.ptr<float>(c));
+        cv::resize(channel, channel_resized, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
+    }
+    
+    // Train DCF filter on resized deep features
+    h_deep_ = dcf_solver_->solveWithMask(deep_resized, label, last_mask_);
+    
+    // ========== Compute initial alpha ==========
     last_alpha_ = config_.alpha_default;
-    h_final_ = adaptive_gating_->blendFilters(h_csrt_, h_deep_, last_alpha_);
     
     initialized_ = true;
     
@@ -186,9 +206,27 @@ cv::Point UpdatedCSRTTracker::detectTarget(const cv::Mat& search_patch) {
     // Apply mask to IMAGE before VGG16 (object-only extraction)
     cv::Mat search_vgg_masked = deep_extractor_->extractMasked(search_patch, last_mask_);
     
-    // Project
+    // Project (512→31 channels)
     cv::Mat search_deep_projected = corr_projection_->forward(search_vgg_masked);
-    last_response_map_deep_ = dcf_solver_->applyFilter(h_deep_, search_deep_projected);
+    
+    // Resize projected deep features to match CSRT spatial size
+    int target_h = search_hog.size[1];
+    int target_w = search_hog.size[2];
+    int C_deep = search_deep_projected.size[0];
+    int H_deep = search_deep_projected.size[1];
+    int W_deep = search_deep_projected.size[2];
+    
+    std::vector<int> new_sizes = {C_deep, target_h, target_w};
+    cv::Mat search_deep_resized(new_sizes, CV_32F);
+    
+    for (int c = 0; c < C_deep; ++c) {
+        cv::Mat channel(H_deep, W_deep, CV_32F, search_deep_projected.ptr<float>(c));
+        cv::Mat channel_resized(target_h, target_w, CV_32F, search_deep_resized.ptr<float>(c));
+        cv::resize(channel, channel_resized, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
+    }
+    
+    // Apply deep filter (now with matching spatial dims)
+    last_response_map_deep_ = dcf_solver_->applyFilter(h_deep_, search_deep_resized);
     
     // ========== Compute adaptive alpha ==========
     last_alpha_ = adaptive_gating_->computeAlpha(
@@ -198,8 +236,13 @@ cv::Point UpdatedCSRTTracker::detectTarget(const cv::Mat& search_patch) {
     // ========== Blend responses ==========
     // Response_final = α·Response_csrt + (1-α)·Response_deep
     if (!last_response_map_csrt_.empty() && !last_response_map_deep_.empty()) {
+        // Resize deep response to match CSRT response spatial size
+        cv::Mat deep_response_resized;
+        cv::resize(last_response_map_deep_, deep_response_resized, 
+                   last_response_map_csrt_.size(), 0, 0, cv::INTER_LINEAR);
+        
         cv::addWeighted(last_response_map_csrt_, last_alpha_, 
-                        last_response_map_deep_, 1.0 - last_alpha_, 
+                        deep_response_resized, 1.0 - last_alpha_, 
                         0.0, last_response_map_);
     } else {
         last_response_map_ = last_response_map_csrt_.clone();
@@ -273,9 +316,6 @@ void UpdatedCSRTTracker::updateFilters(const cv::Mat& frame, const cv::Rect& bbo
         // Update with learning rate
         h_deep_ = (1.0f - config_.learning_rate) * h_deep_ + config_.learning_rate * h_deep_new;
     }
-    
-    // ========== Blend filters ==========
-    h_final_ = adaptive_gating_->blendFilters(h_csrt_, h_deep_, last_alpha_);
     
     // ========== Update templates ==========
     template_img_ = (1.0f - config_.learning_rate) * template_img_ + 
@@ -359,7 +399,6 @@ void UpdatedCSRTTracker::reset() {
     template_features_vgg_ = cv::Mat();
     h_csrt_ = cv::Mat();
     h_deep_ = cv::Mat();
-    h_final_ = cv::Mat();
     last_response_map_ = cv::Mat();
     last_response_map_csrt_ = cv::Mat();
     last_response_map_deep_ = cv::Mat();

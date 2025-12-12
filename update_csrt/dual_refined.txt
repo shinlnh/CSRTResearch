@@ -1,0 +1,10 @@
+==========================================
+Simple Dual Tracker - Basketball Test
+==========================================
+Loaded 725 GT boxes
+Deep networks loaded successfully
+Frame size: [576 x 432]
+Init bbox: [34 x 81 from (198, 214)]
+SimpleDualTracker initialized on bbox: [34 x 81 from (198, 214)]
+OpenCV: terminate handler is called! The last OpenCV error is:
+OpenCV(4.12.0) Error: Assertion failed (src.dims == 3 || src.dims == 4 || src.dims == 5) in run, file D:/W/B/src/opencv-4.12.0/modules/dnn/src/layers/pooling_layer.cpp, line 709

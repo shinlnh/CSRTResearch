@@ -51,16 +51,18 @@ public:
      */
     cv::Mat extractMasked(const cv::Mat& image, const cv::Mat& mask);
     
+    struct FeatureSize { int channels, height, width; };
+    
     /**
      * @brief Get output feature dimensions
      * @return Feature dimensions (channels, height, width)
      */
-    cv::Size3i getFeatureSize() const { return feature_size_; }
+    FeatureSize getFeatureSize() const { return feature_size_; }
     
     /**
      * @brief Get number of output channels
      */
-    int getNumChannels() const { return feature_size_.x; }
+    int getNumChannels() const { return feature_size_.channels; }
     
     /**
      * @brief Check if extractor is initialized
@@ -71,7 +73,7 @@ private:
     Config config_;
     cv::dnn::Net net_;
     bool initialized_;
-    cv::Size3i feature_size_;  // (C, H, W)
+    FeatureSize feature_size_;  // (C, H, W)
     
     // VGG16 ImageNet preprocessing constants
     const cv::Scalar mean_ = cv::Scalar(103.939, 116.779, 123.68); // BGR mean

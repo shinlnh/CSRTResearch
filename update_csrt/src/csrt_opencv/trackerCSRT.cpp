@@ -697,6 +697,29 @@ Ptr<TrackerCSRT> TrackerCSRT::create(const TrackerCSRT::Params &parameters)
     return makePtr<TrackerCSRTImpl>(parameters);
 }
 
-}}  // namespace
+}  // namespace impl
 
-#include "legacy/trackerCSRT.legacy.hpp"
+// ========== Helper functions for dual-branch architecture ==========
+namespace impl {
+
+/** @brief Get response map from TrackerCSRT (for blending with deep features) */
+Mat getTrackerCSRTResponse(Ptr<TrackerCSRT> tracker) {
+    TrackerCSRTImpl* impl = dynamic_cast<TrackerCSRTImpl*>(tracker.get());
+    if (impl) {
+        return impl->getResponseMap();
+    }
+    return Mat();
+}
+
+Mat getTrackerCSRTMask(Ptr<TrackerCSRT> tracker) {
+    TrackerCSRTImpl* impl = dynamic_cast<TrackerCSRTImpl*>(tracker.get());
+    if (impl) {
+        return impl->getMask();
+    }
+    return Mat();
+}
+
+}  // namespace impl
+}  // namespace tracking
+
+// #include "legacy/trackerCSRT.legacy.hpp"  // Not needed for dual-branch

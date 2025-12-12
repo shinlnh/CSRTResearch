@@ -1,0 +1,38 @@
+================================================================================
+Testing Updated CSRT Tracker on Basketball
+================================================================================
+
+Loaded 725 ground truth boxes
+Found 725 images
+Will process 725 frames
+
+Initializing tracker...
+Frame size: (432, 576, 3)
+Initial bbox: [198. 214.  34.  81.]
+
+Tracking...
+  Frame 50/725 - IoU: 0.000, Dist: 766.7px
+  Frame 100/725 - IoU: 0.000, Dist: 1658.3px
+  Frame 150/725 - IoU: 0.000, Dist: 3075.8px
+  Frame 200/725 - IoU: 0.000, Dist: 4545.5px
+  Frame 250/725 - IoU: 0.000, Dist: 6021.2px
+  Frame 300/725 - IoU: 0.000, Dist: 7484.5px
+  Frame 350/725 - IoU: 0.000, Dist: 8951.2px
+  Frame 400/725 - IoU: 0.000, Dist: 10425.0px
+  Frame 450/725 - IoU: 0.000, Dist: 11901.3px
+  Frame 500/725 - IoU: 0.000, Dist: 13420.3px
+  Frame 550/725 - IoU: 0.000, Dist: 14835.7px
+  Frame 600/725 - IoU: 0.000, Dist: 16272.9px
+  Frame 650/725 - IoU: 0.000, Dist: 17751.0px
+  Frame 700/725 - IoU: 0.000, Dist: 19253.0px
+  Frame 725/725 - IoU: 0.000, Dist: 19956.4px
+
+================================================================================
+Results
+================================================================================
+Frames tracked:  724
+AUC:             0.000
+Precision@20px:  0.000
+Mean IoU:        0.000
+Mean Distance:   9436.5px
+================================================================================

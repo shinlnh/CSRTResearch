@@ -38,15 +38,15 @@ struct Config {
     std::string feature_layer = "conv4_3";    // Which layer to extract
     int deep_feature_channels = 512;          // VGG16 conv4_3 channels
     
-    // ONNX model paths
-    std::string vgg16_onnx_path = "update_csrt/models/vgg16_conv4_3.onnx";
-    std::string corr_project_onnx_path = "update_csrt/models/corr_project.onnx";
-    std::string adaptive_gate_onnx_path = "update_csrt/models/adaptive_gating.onnx";
+    // ONNX model paths (relative to build directory)
+    std::string vgg16_onnx_path = "../models/vgg16_conv4_3.onnx";
+    std::string corr_project_onnx_path = "../models/corr_project.onnx";
+    std::string adaptive_gate_onnx_path = "../models/adaptive_gating.onnx";
     
     // ==================== Tracker Window Size ====================
     
-    cv::Size template_size = cv::Size(127, 127);  // Template crop size
-    cv::Size search_size = cv::Size(255, 255);    // Search region size
+    cv::Size template_size = cv::Size(127, 127);  // Template crop size (CSRT paper)
+    cv::Size search_size = cv::Size(255, 255);    // Search region size (CSRT paper)
     float padding = 2.0f;                         // Context padding ratio
     
     // ==================== DCF Filter Parameters ====================
@@ -60,7 +60,7 @@ struct Config {
     int admm_iterations = 4;                  // ADMM iterations per frame
     float admm_rho = 1.0f;                    // ADMM penalty parameter ρ
     float admm_mu = 100.0f;                   // Augmented Lagrangian μ
-    bool use_mask_constraint = true;          // Enable h = m⊙h constraint
+    bool use_mask_constraint = false;         // DISABLE temporarily - debug DCF solver
     
     // ==================== Adaptive Gating ====================
     
@@ -98,6 +98,7 @@ struct Config {
     
     bool visualize = true;                    // Show tracking visualization
     bool show_response_map = false;           // Display response heatmap
+    bool use_rescue = false;                  // Enable rescue strategy
     bool show_mask = false;                   // Display binary mask
     bool verbose = true;                      // Print debug info
     

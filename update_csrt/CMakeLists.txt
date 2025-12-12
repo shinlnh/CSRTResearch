@@ -5,6 +5,12 @@ project(UpdatedCSRT VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Force MinGW compiler (compatible with MSYS2 OpenCV)
+if(WIN32)
+    set(CMAKE_C_COMPILER "C:/msys64/mingw64/bin/gcc.exe")
+    set(CMAKE_CXX_COMPILER "C:/msys64/mingw64/bin/g++.exe")
+endif()
+
 # Build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -13,9 +19,12 @@ endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 # Find OpenCV
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED 
+    COMPONENTS core imgproc video highgui dnn objdetect tracking
+)
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 message(STATUS "OpenCV include: ${OpenCV_INCLUDE_DIRS}")
+message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
 
 # Include directories
 include_directories(
@@ -65,7 +74,20 @@ endif()
 
 # Main executable
 add_executable(updated_csrt_demo src/main.cpp)
-target_link_libraries(updated_csrt_demo updated_csrt_lib)
+target_link_libraries(updated_csrt_demo updated_csrt_lib ${OpenCV_LIBS})
+
+# OTB-100 evaluator
+add_executable(otb_eval src/otb_eval.cpp)
+target_link_libraries(otb_eval updated_csrt_lib ${OpenCV_LIBS})
+
+# Basketball quick test
+add_executable(test_basketball src/test_basketball.cpp)
+target_link_libraries(test_basketball updated_csrt_lib ${OpenCV_LIBS})
+
+# Simple dual tracker (OpenCV CSRT + Deep)
+# Use built-in OpenCV TrackerCSRT, no need to recompile source
+add_executable(simple_dual src/simple_dual_tracker.cpp)
+target_link_libraries(simple_dual ${OpenCV_LIBS})
 
 # Installation
 install(TARGETS updated_csrt_lib updated_csrt_demo

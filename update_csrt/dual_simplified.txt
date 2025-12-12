@@ -1,0 +1,22 @@
+==========================================
+Simple Dual Tracker - Basketball Test
+==========================================
+Loaded 725 GT boxes
+Deep networks loaded successfully
+Frame size: [576 x 432]
+Init bbox: [34 x 81 from (198, 214)]
+SimpleDualTracker initialized on bbox: [34 x 81 from (198, 214)]
+Frame 10/50 - IoU: 0.710, Dist: 8.7px
+Frame 20/50 - IoU: 0.785, Dist: 2.9px
+Frame 30/50 - IoU: 0.616, Dist: 6.7px
+Frame 40/50 - IoU: 0.603, Dist: 5.8px
+Frame 50/50 - IoU: 0.485, Dist: 8.9px
+
+==========================================
+Results (49 frames)
+==========================================
+AUC:             0.658
+Precision@20px:  1.000
+Mean IoU:        0.660
+Mean Distance:   5.8px
+==========================================

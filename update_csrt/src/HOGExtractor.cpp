@@ -34,12 +34,24 @@ void HOGExtractor::initColorNamesTable() {
 }
 
 cv::Mat HOGExtractor::computeHOG(const cv::Mat& image) {
+    // Round DOWN to multiple of 4 to avoid extra padding
+    // 127 → 124 (31 cells), not 128 (32 cells)
+    int target_h = (image.rows / 4) * 4;
+    int target_w = (image.cols / 4) * 4;
+    
+    cv::Mat resized;
+    if (target_h != image.rows || target_w != image.cols) {
+        cv::resize(image, resized, cv::Size(target_w, target_h));
+    } else {
+        resized = image.clone();
+    }
+    
     // Convert to grayscale
     cv::Mat gray;
-    if (image.channels() == 3) {
-        cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    if (resized.channels() == 3) {
+        cv::cvtColor(resized, gray, cv::COLOR_BGR2GRAY);
     } else {
-        gray = image.clone();
+        gray = resized.clone();
     }
     
     // Compute gradients
@@ -57,7 +69,7 @@ cv::Mat HOGExtractor::computeHOG(const cv::Mat& image) {
     
     // For simplicity, use OpenCV's HOGDescriptor
     cv::HOGDescriptor hog(
-        cv::Size(image.cols, image.rows),  // win_size
+        cv::Size(target_w, target_h),  // win_size (compatible with block/stride)
         cv::Size(config_.hog_block_size * config_.hog_cell_size, 
                  config_.hog_block_size * config_.hog_cell_size),  // block_size
         cv::Size(config_.hog_cell_size, config_.hog_cell_size),  // block_stride
@@ -69,11 +81,12 @@ cv::Mat HOGExtractor::computeHOG(const cv::Mat& image) {
     hog.compute(gray, descriptors);
     
     // Reshape to spatial feature map (simplified)
-    int H = image.rows / config_.hog_cell_size;
-    int W = image.cols / config_.hog_cell_size;
+    int H = target_h / config_.hog_cell_size;
+    int W = target_w / config_.hog_cell_size;
     
     // Create multi-channel HOG feature map (21 channels)
-    cv::Mat hog_features = cv::Mat::zeros(hog_channels_, H, W, CV_32F);
+    int sizes[] = {hog_channels_, H, W};
+    cv::Mat hog_features = cv::Mat::zeros(3, sizes, CV_32F);
     
     // Fill with computed HOG descriptors (simplified mapping)
     int descriptor_idx = 0;

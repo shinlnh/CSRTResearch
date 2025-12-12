@@ -1,0 +1,3 @@
+"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\otb_eval.dir/objects.a
+C:\msys64\mingw64\bin\ar.exe qc CMakeFiles\otb_eval.dir/objects.a @CMakeFiles\otb_eval.dir\objects1.rsp
+C:\msys64\mingw64\bin\g++.exe -O3 -DNDEBUG -Wl,--whole-archive CMakeFiles\otb_eval.dir/objects.a -Wl,--no-whole-archive -o otb_eval.exe -Wl,--out-implib,libotb_eval.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\otb_eval.dir\linkLibs.rsp

@@ -1,0 +1,43 @@
+================================================================================
+Testing Updated CSRT on Basketball (First 50 frames)
+================================================================================
+
+Loaded 725 GT boxes
+================================================================================
+Updated CSRT Tracker Configuration
+================================================================================
+Backbone: vgg16 (conv4_3)
+Deep channels: 512 -> 31
+Template size: [124 x 124]
+Search size: [252 x 252]
+Adaptive alpha: Yes [0.3, 0.9]
+ADMM iterations: 4 (Ï=1, Î¼=100)
+Mask constraint: Enabled
+Rescue strategy: Disabled
+================================================================================
+
+=== Initializing Dual-Branch Tracker ===
+Branch 1: Traditional CSRT with HOG+ColorNames...
+HOGExtractor initialized: 21 HOG + 10 ColorNames = 31 channels
+Branch 2: Deep features with VGG16...
+Loading VGG16 model from: ../models/vgg16_conv4_3.onnx
+VGG16 initialized. Feature size: 512x15x15
+Loading CorrProject model from: ../models/corr_project.onnx
+CorrProject network initialized successfully
+Shared components...
+Loading AdaptiveGating model from: ../models/adaptive_gating.onnx
+AdaptiveGating network initialized successfully
+MaskGenerator initialized with threshold=0.5
+DCFSolver initialized with ADMM iterations=4, Î»=0.0001
+âœ“ UpdatedCSRTTracker initialized successfully
+
+Frame size: [576 x 432]
+Init bbox: [34 x 81 from (198, 214)]
+
+=== Initializing Tracker ===
+Bbox: [34 x 81 from (198, 214)]
+Extracting HOG+ColorNames features...
+Extracting VGG16 deep features...
+Training CSRT filter (HOG)...
+OpenCV: terminate handler is called! The last OpenCV error is:
+OpenCV(4.12.0) Error: Sizes of input arguments do not match (The operation is neither 'array op array' (where arrays have the same size and the same number of channels), nor 'array op scalar', nor 'scalar op array') in arithm_op, file D:/W/B/src/opencv-4.12.0/modules/core/src/arithm.cpp, line 662
