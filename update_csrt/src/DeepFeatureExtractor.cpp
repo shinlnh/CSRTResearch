@@ -83,52 +83,58 @@ cv::Mat DeepFeatureExtractor::extract(const cv::Mat& image) {
 }
 
 cv::Mat DeepFeatureExtractor::extractMasked(const cv::Mat& image, const cv::Mat& mask) {
-    // Extract features
-    cv::Mat features = extract(image);
+    // ========== KEY ARCHITECTURE: MASK AT IMAGE LEVEL ==========
+    // Apply mask to IMAGE before VGG16, not to features after!
+    // Background pixels → mean color → VGG doesn't learn background
     
-    if (features.empty()) {
-        return cv::Mat();
-    }
+    cv::Mat masked_image = applyMaskToImage(image, mask);
     
-    // Apply mask to features
-    return applyMaskToFeatures(features, mask);
+    // Extract features from masked image (object-only region)
+    return extract(masked_image);
 }
 
-cv::Mat DeepFeatureExtractor::applyMaskToFeatures(const cv::Mat& features, const cv::Mat& mask) {
-    if (mask.empty() || features.empty()) {
-        return features;
+cv::Mat DeepFeatureExtractor::applyMaskToImage(const cv::Mat& image, const cv::Mat& mask) {
+    if (mask.empty() || image.empty()) {
+        return image.clone();
     }
     
-    // Resize mask to match feature spatial dimensions
-    cv::Mat mask_resized;
-    cv::resize(mask, mask_resized, 
-               cv::Size(features.size[2], features.size[1]), 
-               0, 0, cv::INTER_NEAREST);
-    
-    // Convert mask to float [0, 1]
-    cv::Mat mask_float;
-    mask_resized.convertTo(mask_float, CV_32F, 1.0 / 255.0);
-    
-    // Apply mask to each channel
-    cv::Mat masked_features = features.clone();
-    int C = features.size[0];
-    int H = features.size[1];
-    int W = features.size[2];
-    
-    for (int c = 0; c < C; ++c) {
-        // Extract channel c
-        cv::Range ranges[] = {cv::Range(c, c+1), cv::Range::all(), cv::Range::all()};
-        cv::Mat channel = masked_features(ranges).clone();
-        channel = channel.reshape(1, H);  // Reshape to 2D (H, W)
-        
-        // Multiply by mask
-        channel = channel.mul(mask_float);
-        
-        // Put back
-        channel.reshape(1, 1).copyTo(masked_features(ranges));
+    // Convert mask to binary (0 or 1)
+    cv::Mat binary_mask;
+    if (mask.type() == CV_32FC1) {
+        // Already float, threshold at 0.5
+        cv::threshold(mask, binary_mask, 0.5, 1.0, cv::THRESH_BINARY);
+        binary_mask.convertTo(binary_mask, CV_8U, 255.0);
+    } else {
+        // Assume CV_8UC1, threshold at 127
+        cv::threshold(mask, binary_mask, 127, 255, cv::THRESH_BINARY);
     }
     
-    return masked_features;
+    // Resize mask to match image size if needed
+    if (binary_mask.size() != image.size()) {
+        cv::resize(binary_mask, binary_mask, image.size(), 0, 0, cv::INTER_NEAREST);
+    }
+    
+    // Create masked image: background = ImageNet mean color
+    cv::Mat masked_image = image.clone();
+    
+    // Set background pixels (mask == 0) to mean color
+    // mean_ = (103.939, 116.779, 123.68) in BGR
+    for (int y = 0; y < image.rows; ++y) {
+        const uchar* mask_row = binary_mask.ptr<uchar>(y);
+        cv::Vec3b* img_row = masked_image.ptr<cv::Vec3b>(y);
+        
+        for (int x = 0; x < image.cols; ++x) {
+            if (mask_row[x] == 0) {
+                // Background pixel → set to ImageNet mean
+                img_row[x][0] = static_cast<uchar>(mean_[0]); // B
+                img_row[x][1] = static_cast<uchar>(mean_[1]); // G
+                img_row[x][2] = static_cast<uchar>(mean_[2]); // R
+            }
+            // Object pixels (mask == 255) → keep original
+        }
+    }
+    
+    return masked_image;
 }
 
 } // namespace update_csrt

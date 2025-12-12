@@ -152,7 +152,8 @@ bool UpdatedCSRTTracker::initialize(const cv::Mat& frame, const cv::Rect& bbox) 
     // ========== Branch 2: Train deep filter ==========
     std::cout << "Training deep filter (VGG16 → CorrProject)..." << std::endl;
     
-    // Apply mask to deep features: f_masked = f ⊙ m
+    // Apply mask to IMAGE before VGG16 (background → mean color)
+    // KEY: VGG16 only sees object region, doesn't learn background!
     cv::Mat deep_masked = deep_extractor_->extractMasked(template_img_, last_mask_);
     
     // Project to correlation filter space
@@ -182,7 +183,7 @@ cv::Point UpdatedCSRTTracker::detectTarget(const cv::Mat& search_patch) {
     // ========== Branch 2: Deep response ==========
     cv::Mat search_vgg = deep_extractor_->extract(search_patch);
     
-    // Apply mask to search deep features
+    // Apply mask to IMAGE before VGG16 (object-only extraction)
     cv::Mat search_vgg_masked = deep_extractor_->extractMasked(search_patch, last_mask_);
     
     // Project
@@ -263,7 +264,7 @@ void UpdatedCSRTTracker::updateFilters(const cv::Mat& frame, const cv::Rect& bbo
     cv::Mat new_vgg = deep_extractor_->extract(new_template);
     
     if (!new_vgg.empty()) {
-        // Apply mask to deep features: f_masked = f ⊙ m
+        // Apply mask to IMAGE before VGG16 (background suppression)
         cv::Mat new_vgg_masked = deep_extractor_->extractMasked(new_template, last_mask_);
         
         // Project

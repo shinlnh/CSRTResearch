@@ -14,6 +14,9 @@ namespace update_csrt {
  * 
  * Extracts deep convolutional features from VGG16 conv4_3 layer.
  * Features are 512-channel with spatial dimensions depending on input size.
+ * 
+ * KEY: Binary mask is applied at IMAGE-LEVEL before VGG16 to prevent
+ * learning background features. This forces VGG to focus only on object region.
  */
 class DeepFeatureExtractor {
 public:
@@ -36,10 +39,15 @@ public:
     cv::Mat extract(const cv::Mat& image);
     
     /**
-     * @brief Extract features with binary mask applied
-     * @param image Input image patch
-     * @param mask Binary mask (1-channel, 0 or 255)
-     * @return Masked feature tensor
+     * @brief Extract features with binary mask applied at IMAGE LEVEL
+     * 
+     * ARCHITECTURE CHANGE: Mask is applied to the INPUT IMAGE before VGG16,
+     * setting background pixels to mean color. This prevents VGG from learning
+     * background features, forcing it to focus only on the object region.
+     * 
+     * @param image Input image patch (BGR, 8UC3)
+     * @param mask Binary mask (CV_32FC1 or CV_8UC1, values 0 or 1/255)
+     * @return Feature tensor from object-only region
      */
     cv::Mat extractMasked(const cv::Mat& image, const cv::Mat& mask);
     
@@ -75,9 +83,16 @@ private:
     cv::Mat preprocessImage(const cv::Mat& image);
     
     /**
-     * @brief Apply binary mask to feature tensor
+     * @brief Apply binary mask at image level (set background to mean color)
+     * 
+     * This is the key operation: background pixels are set to ImageNet mean
+     * so VGG16 sees them as "neutral" and doesn't learn background features.
+     * 
+     * @param image Input image
+     * @param mask Binary mask (0 = background, 1 or 255 = object)
+     * @return Masked image (background = mean color)
      */
-    cv::Mat applyMaskToFeatures(const cv::Mat& features, const cv::Mat& mask);
+    cv::Mat applyMaskToImage(const cv::Mat& image, const cv::Mat& mask);
 };
 
 } // namespace update_csrt
