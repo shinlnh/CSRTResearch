@@ -1,11 +1,7 @@
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/updated_csrt_lib.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/updated_csrt_demo.dir
+E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/csrt_lib.dir
+E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/csrt_demo.dir
 E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/otb_eval.dir
 E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/test_basketball.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/simple_dual.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/edit_cache.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/rebuild_cache.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/list_install_components.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/install.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/install/local.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/install/strip.dir
+E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/INSTALL.dir
+E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/ALL_BUILD.dir
+E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/ZERO_CHECK.dir

@@ -1,3 +1,0 @@
-"C:\Program Files\CMake\bin\cmake.exe" -E rm -f CMakeFiles\updated_csrt_demo.dir/objects.a
-C:\msys64\mingw64\bin\ar.exe qc CMakeFiles\updated_csrt_demo.dir/objects.a @CMakeFiles\updated_csrt_demo.dir\objects1.rsp
-C:\msys64\mingw64\bin\g++.exe -O3 -DNDEBUG -Wl,--whole-archive CMakeFiles\updated_csrt_demo.dir/objects.a -Wl,--no-whole-archive -o updated_csrt_demo.exe -Wl,--out-implib,libupdated_csrt_demo.dll.a -Wl,--major-image-version,0,--minor-image-version,0 @CMakeFiles\updated_csrt_demo.dir\linkLibs.rsp
