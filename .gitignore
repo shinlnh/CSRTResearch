@@ -1,4 +1,21 @@
-/.vscode
-/otb100
-/venv
-/build
+# ===== CMake / Build artifacts =====
+**/build/
+build/
+CMakeCache.txt
+**/CMakeCache.txt
+CMakeFiles/
+**/CMakeFiles/
+cmake_install.cmake
+**/cmake_install.cmake
+install/
+**/install/
+
+# ===== vcpkg =====
+vcpkg_installed/
+**/vcpkg_installed/
+.vcpkg-root
+
+# ===== misc temp =====
+.codex_tmp/
+build_check/
+

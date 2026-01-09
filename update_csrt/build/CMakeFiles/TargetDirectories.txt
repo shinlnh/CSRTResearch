@@ -1,7 +1,0 @@
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/csrt_lib.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/csrt_demo.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/otb_eval.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/test_basketball.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/INSTALL.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/ALL_BUILD.dir
-E:/SourceCode/C2P/Project/CSRTResearch/update_csrt/build/CMakeFiles/ZERO_CHECK.dir
