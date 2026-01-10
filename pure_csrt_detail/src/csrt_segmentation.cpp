@@ -5,29 +5,6 @@
 
 namespace csrt {
 
-namespace {
-
-cv::Rect MakeSafeRoi(int x1, int y1, int x2, int y2, const cv::Size &size) {
-    x1 = std::min(std::max(x1, 0), size.width - 1);
-    y1 = std::min(std::max(y1, 0), size.height - 1);
-    x2 = std::min(std::max(x2, 0), size.width - 1);
-    y2 = std::min(std::max(y2, 0), size.height - 1);
-    if (x2 < x1) {
-        x2 = x1;
-    }
-    if (y2 < y1) {
-        y2 = y1;
-    }
-
-    int width = std::max(1, x2 - x1 + 1);
-    int height = std::max(1, y2 - y1 + 1);
-    width = std::min(width, size.width - x1);
-    height = std::min(height, size.height - y1);
-    return cv::Rect(x1, y1, width, height);
-}
-
-}  // namespace
-
 Histogram::Histogram(int num_dimensions, int num_bins_per_dimension)
     : num_bins_per_dim_(num_bins_per_dimension), num_dims_(num_dimensions) {
     size_ = cvFloor(std::pow(num_bins_per_dim_, num_dims_));
@@ -179,16 +156,14 @@ std::pair<cv::Mat, cv::Mat> Segment::ComputePosteriors(
     hist_background.ExtractBackgroundHistogram(img_channels, x1, y1, x2, y2,
         outer_x1, outer_y1, outer_x2, outer_y2);
 
-    cv::Rect roi_inner = MakeSafeRoi(x1, y1, x2, y2, img_channels[0].size());
-    int roi_w = std::max(1, roi_inner.width);
-    int roi_h = std::max(1, roi_inner.height);
-    double factor = std::sqrt(1000.0 / (static_cast<double>(roi_w) * roi_h));
+    double factor = std::sqrt(1000.0 / ((x2 - x1) * (y2 - y1)));
     if (factor > 1.0) {
         factor = 1.0;
     }
 
-    cv::Size new_size(std::max(1, cvFloor(roi_w * factor)),
-        std::max(1, cvFloor(roi_h * factor)));
+    cv::Size new_size(cvFloor((x2 - x1) * factor), cvFloor((y2 - y1) * factor));
+
+    cv::Rect roi_inner = cv::Rect(x1, y1, x2 - x1, y2 - y1);
     std::vector<cv::Mat> roi_channels(img_channels.size());
     for (size_t i = 0; i < img_channels.size(); ++i) {
         cv::resize(img_channels[i](roi_inner), roi_channels[i], new_size);
@@ -250,9 +225,7 @@ std::pair<cv::Mat, cv::Mat> Segment::ComputePosteriors2(
     }
     cv::Size new_size(cvFloor(width * factor), cvFloor(height * factor));
 
-    cv::Rect roi_inner = MakeSafeRoi(x1, y1, x2, y2, img_channels[0].size());
-    width = roi_inner.width;
-    height = roi_inner.height;
+    cv::Rect roi_inner = cv::Rect(x1, y1, width, height);
     std::vector<cv::Mat> roi_channels(img_channels.size());
     for (size_t i = 0; i < img_channels.size(); ++i) {
         cv::resize(img_channels[i](roi_inner), roi_channels[i], new_size);
@@ -303,7 +276,7 @@ std::pair<cv::Mat, cv::Mat> Segment::ComputePosteriors2(
     }
 
     cv::Size new_size(cvFloor((x2 - x1) * factor), cvFloor((y2 - y1) * factor));
-    cv::Rect roi_inner = MakeSafeRoi(x1, y1, x2, y2, img_channels[0].size());
+    cv::Rect roi_inner = cv::Rect(x1, y1, x2 - x1 + 1, y2 - y1 + 1);
 
     std::vector<cv::Mat> roi_channels(img_channels.size());
     for (size_t i = 0; i < img_channels.size(); ++i) {

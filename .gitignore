@@ -1,6 +1,8 @@
 # ===== CMake / Build artifacts =====
 **/build/
 build/
+**/buildcheck/
+buildcheck/
 CMakeCache.txt
 **/CMakeCache.txt
 CMakeFiles/
@@ -11,11 +13,14 @@ install/
 **/install/
 
 # ===== vcpkg =====
+vcpkg/
+**/vcpkg/
 vcpkg_installed/
 **/vcpkg_installed/
 .vcpkg-root
 
 # ===== misc temp =====
 .codex_tmp/
-build_check/
-
+venv/
+.vscode/
+otb100/

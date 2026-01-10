@@ -2,7 +2,6 @@
 
 #include <opencv2/opencv.hpp>
 
-#include <deque>
 #include <string>
 #include <vector>
 
@@ -13,7 +12,7 @@ namespace csrt {
 
 struct CsrtParams {
     bool use_channel_weights = true;
-    bool use_segmentation = false;
+    bool use_segmentation = true;
     bool use_hog = true;
     bool use_color_names = true;
     bool use_gray = true;
@@ -45,20 +44,6 @@ struct CsrtParams {
     float histogram_lr = 0.04f;
 
     float psr_threshold = 0.035f;
-
-    bool use_kf = false;
-    int apce_window = 30;
-    float apce_gate_threshold = 0.0f;
-    float apce_eps = 1e-6f;
-    float apce_norm_eps = 1e-5f;
-    int kf_trace_window = 30;
-    float kf_r_min = 1.0f;
-    float kf_r_max = 10.0f;
-    float kf_q_pos = 1e-2f;
-    float kf_q_vel = 1e-4f;
-    float kf_p_init = 10.0f;
-    float search_scale_min = 1.0f;
-    float search_scale_max = 1.0f;  // Disable adaptive search scale
 };
 
 class CsrtTracker {
@@ -122,17 +107,6 @@ private:
     cv::Mat last_response_;
     float last_psr_ = 0.0f;
     float last_peak_ = 0.0f;
-    float last_apce_ = 0.0f;
-    float last_apce_norm_ = 0.0f;
-    float last_kf_trace_ = 0.0f;
-    float last_kf_uncert_ = 0.0f;
-    bool last_measurement_accepted_ = true;
-
-    cv::KalmanFilter kf_;
-    bool kf_initialized_ = false;
-    float search_scale_factor_ = 1.0f;
-    std::deque<float> apce_history_;
-    std::deque<float> kf_trace_history_;
 };
 
 }  // namespace csrt

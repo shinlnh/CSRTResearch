@@ -7,9 +7,11 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <opencv2/highgui.hpp>
@@ -58,6 +60,7 @@ struct Args {
     bool display{false};
     std::optional<int> maxFrames;
     std::optional<std::filesystem::path> saveVisRoot;
+    std::optional<std::filesystem::path> outputCsv;
 };
 
 void printUsage() {
@@ -67,6 +70,7 @@ void printUsage() {
                  "  --sequence <name>           Run a single sequence (default: run all)\n"
                  "  --display                   Show visualization with GT (green) and CSRT (red)\n"
                  "  --save-vis <path>           Save drawn frames to this directory\n"
+                 "  --output-csv <path>          Write per-sequence metrics to CSV\n"
                  "  --max-frames <int>          Limit number of frames per sequence\n"
                  "  --help                      Show this help message\n";
 }
@@ -84,6 +88,8 @@ bool parseArgs(int argc, char** argv, Args& args) {
             args.maxFrames = std::stoi(argv[++i]);
         } else if (current == "--save-vis" && (i + 1) < argc) {
             args.saveVisRoot = std::filesystem::path(argv[++i]);
+        } else if (current == "--output-csv" && (i + 1) < argc) {
+            args.outputCsv = std::filesystem::path(argv[++i]);
         } else if (current == "--help") {
             printUsage();
             return false;
@@ -154,15 +160,52 @@ struct SequenceData {
     std::vector<BoundingBox> groundTruth;
 };
 
+struct SequenceMetrics {
+    std::string name;
+    std::size_t frames{0};
+    double auc{0.0};
+    double success50{0.0};
+    double precision20{0.0};
+    double fps{0.0};
+};
+
+struct SequenceResult {
+    SequenceMetrics metrics;
+    std::vector<double> ious;
+    std::vector<double> centerErrors;
+    double trackingSeconds{0.0};
+};
+
+std::vector<std::filesystem::path> findGroundTruthFiles(const std::filesystem::path& seqPath) {
+    std::vector<std::filesystem::path> gtFiles;
+    // Collect all groundtruth_rect*.txt files
+    for (const auto& entry : std::filesystem::directory_iterator(seqPath)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        const auto filename = entry.path().filename().string();
+        if (filename.find("groundtruth_rect") == 0 && filename.rfind(".txt") == filename.length() - 4) {
+            gtFiles.push_back(entry.path());
+        }
+    }
+    std::sort(gtFiles.begin(), gtFiles.end());
+    return gtFiles;
+}
+
 std::vector<std::filesystem::path> listSequences(const std::filesystem::path& root) {
     std::vector<std::filesystem::path> seqPaths;
     for (const auto& entry : std::filesystem::directory_iterator(root)) {
         if (!entry.is_directory()) {
             continue;
         }
-        const auto gt = entry.path() / "groundtruth_rect.txt";
+        // Skip metadata/helper directories
+        const auto dirName = entry.path().filename().string();
+        if (dirName == "OTB-dataset" || dirName == ".git") {
+            continue;
+        }
         const auto imgDir = entry.path() / "img";
-        if (std::filesystem::exists(gt) && std::filesystem::exists(imgDir)) {
+        const auto gtFiles = findGroundTruthFiles(entry.path());
+        if (!gtFiles.empty() && std::filesystem::exists(imgDir)) {
             seqPaths.push_back(entry.path());
         }
     }
@@ -172,19 +215,60 @@ std::vector<std::filesystem::path> listSequences(const std::filesystem::path& ro
     return seqPaths;
 }
 
-std::optional<SequenceData> loadSequence(const std::filesystem::path& seqPath) {
-    SequenceData data;
-    data.name = seqPath.filename().string();
-    const auto gtFile = seqPath / "groundtruth_rect.txt";
+std::vector<SequenceData> loadAllSequenceVariants(const std::filesystem::path& seqPath) {
+    std::vector<SequenceData> results;
+    const auto gtFiles = findGroundTruthFiles(seqPath);
     const auto frames = collectFramePaths(seqPath / "img");
-    const auto gt = loadGroundTruth(gtFile);
-    if (frames.empty() || !gt || gt->empty()) {
+    
+    if (frames.empty() || gtFiles.empty()) {
+        return results;
+    }
+    
+    const auto baseName = seqPath.filename().string();
+    
+    for (const auto& gtFile : gtFiles) {
+        SequenceData data;
+        auto gt = loadGroundTruth(gtFile);
+        if (!gt || gt->empty()) {
+            continue;
+        }
+        
+        // Generate name based on ground truth file variant
+        if (gtFiles.size() == 1) {
+            data.name = baseName;
+        } else {
+            // Extract variant number from filename (e.g., groundtruth_rect.1.txt -> _1)
+            const auto gtFilename = gtFile.filename().string();
+            const auto dotPos = gtFilename.rfind(".txt");
+            if (dotPos != std::string::npos && dotPos > 0) {
+                const auto beforeTxt = gtFilename.substr(0, dotPos);
+                const auto lastDot = beforeTxt.rfind('.');
+                if (lastDot != std::string::npos) {
+                    const auto variant = beforeTxt.substr(lastDot + 1);
+                    data.name = baseName + "_" + variant;
+                } else {
+                    data.name = baseName;
+                }
+            } else {
+                data.name = baseName;
+            }
+        }
+        
+        const std::size_t count = std::min<std::size_t>(frames.size(), gt->size());
+        data.frames.assign(frames.begin(), frames.begin() + static_cast<std::ptrdiff_t>(count));
+        data.groundTruth.assign(gt->begin(), gt->begin() + static_cast<std::ptrdiff_t>(count));
+        results.push_back(std::move(data));
+    }
+    
+    return results;
+}
+
+std::optional<SequenceData> loadSequence(const std::filesystem::path& seqPath) {
+    auto variants = loadAllSequenceVariants(seqPath);
+    if (variants.empty()) {
         return std::nullopt;
     }
-    const std::size_t count = std::min<std::size_t>(frames.size(), gt->size());
-    data.frames.assign(frames.begin(), frames.begin() + static_cast<std::ptrdiff_t>(count));
-    data.groundTruth.assign(gt->begin(), gt->begin() + static_cast<std::ptrdiff_t>(count));
-    return data;
+    return variants[0];
 }
 
 double centerError(const BoundingBox& pred, const BoundingBox& gt) {
@@ -261,7 +345,7 @@ void drawOverlay(cv::Mat& frame,
     }
 }
 
-struct SequenceResult {
+struct RawSequenceResult {
     std::string name;
     std::vector<double> ious;
     std::vector<double> centerErrors;
@@ -269,7 +353,7 @@ struct SequenceResult {
     double totalSeconds{0.0};
 };
 
-std::optional<SequenceResult> runSequence(const SequenceData& data,
+std::optional<RawSequenceResult> runSequence(const SequenceData& data,
                                           const Args& args,
                                           const std::optional<std::filesystem::path>& visRoot) {
     if (data.frames.empty() || data.groundTruth.empty()) {
@@ -298,7 +382,7 @@ std::optional<SequenceResult> runSequence(const SequenceData& data,
         std::filesystem::create_directories(sequenceVisDir);
     }
 
-    SequenceResult result;
+    RawSequenceResult result;
     result.name = data.name;
     result.ious.reserve(data.frames.size());
     result.centerErrors.reserve(data.frames.size());
@@ -392,27 +476,39 @@ int main(int argc, char** argv) {
         std::filesystem::create_directories(*visRoot);
     }
 
-    std::vector<double> allIous;
-    std::vector<double> allErrors;
-    double totalSeconds = 0.0;
-    std::size_t totalFrames = 0;
+    // Collect all sequence data first
+    std::vector<SequenceData> allSequences;
+    for (const auto& seqPath : sequencePaths) {
+        auto variants = loadAllSequenceVariants(seqPath);
+        allSequences.insert(allSequences.end(), variants.begin(), variants.end());
+    }
 
-    std::cout << "Running pure CSRT on " << sequencePaths.size() << " sequence(s)\n";
+    std::vector<SequenceResult> results(allSequences.size());
 
-    for (std::size_t idx = 0; idx < sequencePaths.size(); ++idx) {
-        const auto seqData = loadSequence(sequencePaths[idx]);
-        if (!seqData) {
-            std::cerr << "Skipping sequence: " << sequencePaths[idx] << "\n";
-            continue;
+    std::cout << "Running pure CSRT on " << allSequences.size() << " sequence(s)\n";
+    
+    // Multi-threading
+    const unsigned int numThreads = std::thread::hardware_concurrency();
+    std::cout << "Using " << numThreads << " threads for parallel processing\n\n";
+    
+    std::mutex coutMutex;
+    std::atomic<std::size_t> sequenceCounter{0};
+    
+    auto processSequence = [&](std::size_t idx) {
+        const auto& seqData = allSequences[idx];
+        
+        {
+            std::lock_guard<std::mutex> lock(coutMutex);
+            const auto current = ++sequenceCounter;
+            std::cout << "[" << current << "/" << allSequences.size() << "] "
+                      << seqData.name << " (" << seqData.frames.size() << " frames)\n";
         }
 
-        std::cout << "[" << (idx + 1) << "/" << sequencePaths.size() << "] "
-                  << seqData->name << " (" << seqData->frames.size() << " frames)\n";
-
-        const auto result = runSequence(*seqData, args, visRoot);
+        const auto result = runSequence(seqData, args, visRoot);
         if (!result) {
-            std::cerr << "Failed on sequence " << seqData->name << "\n";
-            continue;
+            std::lock_guard<std::mutex> lock(coutMutex);
+            std::cerr << "Failed on sequence " << seqData.name << "\n";
+            return;
         }
 
         const std::vector<double> thresholds = [] {
@@ -424,18 +520,48 @@ int main(int argc, char** argv) {
         }();
         const auto scurve = successCurve(result->ious, thresholds);
         const double auc = trapezoidAuc(thresholds, scurve);
-        const double success50 = precisionAt(result->ious, 0.5);  // IoU >= 0.5
+        const double success50 = precisionAt(result->ious, 0.5);
         const double precision20 = precisionAt(result->centerErrors, 20.0);
 
-        std::cout << "  AUC=" << std::fixed << std::setprecision(3) << auc
-                  << "  Success@0.5=" << success50
-                  << "  Precision@20px=" << precision20
-                  << "  FPS=" << std::setprecision(2) << result->fps << "\n";
-
-        allIous.insert(allIous.end(), result->ious.begin(), result->ious.end());
-        allErrors.insert(allErrors.end(), result->centerErrors.begin(), result->centerErrors.end());
-        totalFrames += result->ious.size();
-        totalSeconds += result->totalSeconds;
+        results[idx].metrics = {seqData.name, result->ious.size(), auc, success50, precision20, result->fps};
+        results[idx].ious = result->ious;
+        results[idx].centerErrors = result->centerErrors;
+        results[idx].trackingSeconds = result->totalSeconds;
+    };
+    
+    std::vector<std::thread> threads;
+    const std::size_t batchSize = (allSequences.size() + numThreads - 1) / numThreads;
+    
+    for (unsigned int t = 0; t < numThreads; ++t) {
+        std::size_t startIdx = t * batchSize;
+        std::size_t endIdx = std::min(startIdx + batchSize, allSequences.size());
+        if (startIdx < allSequences.size()) {
+            threads.emplace_back([&, startIdx, endIdx]() {
+                for (std::size_t i = startIdx; i < endIdx; ++i) {
+                    processSequence(i);
+                }
+            });
+        }
+    }
+    
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    
+    // Aggregate results
+    std::vector<double> allIous;
+    std::vector<double> allErrors;
+    double totalSeconds = 0.0;
+    std::size_t totalFrames = 0;
+    std::vector<SequenceMetrics> perSequence;
+    
+    for (const auto& result : results) {
+        if (result.metrics.frames == 0) continue;
+        allIous.insert(allIous.end(), result.ious.begin(), result.ious.end());
+        allErrors.insert(allErrors.end(), result.centerErrors.begin(), result.centerErrors.end());
+        totalFrames += result.metrics.frames;
+        totalSeconds += result.trackingSeconds;
+        perSequence.push_back(result.metrics);
     }
 
     if (args.display) {
@@ -469,6 +595,25 @@ int main(int argc, char** argv) {
               << " | Precision@20px: " << overallPrecision20 << "\n";
     std::cout << "Tracking FPS (tracker only): " << std::setprecision(2) << overallFps << "\n";
     std::cout << "====================================================\n";
+
+    if (args.outputCsv) {
+        std::ofstream out(*args.outputCsv);
+        if (!out.is_open()) {
+            std::cerr << "Failed to open output CSV: " << *args.outputCsv << "\n";
+            return 1;
+        }
+        out << "sequence,frames,auc,success50,precision20,fps\n";
+        out << std::fixed << std::setprecision(6);
+        for (const auto& entry : perSequence) {
+            out << entry.name << "," << entry.frames << ","
+                << entry.auc << "," << entry.success50 << ","
+                << entry.precision20 << "," << entry.fps << "\n";
+        }
+        out << "OVERALL," << totalFrames << ","
+            << overallAuc << "," << overallSuccess50 << ","
+            << overallPrecision20 << "," << overallFps << "\n";
+        std::cout << "Wrote CSV to: " << *args.outputCsv << "\n";
+    }
 
     return 0;
 }

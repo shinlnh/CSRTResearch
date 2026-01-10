@@ -118,11 +118,6 @@ cv::Mat GetSubwindow(const cv::Mat &image, const cv::Point2f &center, int width,
         roi.height = image.rows - roi.y;
     }
 
-    if (roi.width <= 0 || roi.height <= 0 || roi.x < 0 || roi.y < 0 ||
-        roi.x >= image.cols || roi.y >= image.rows) {
-        return cv::Mat();
-    }
-
     cv::Mat subwindow = image(roi).clone();
     cv::copyMakeBorder(subwindow, subwindow, padding_top, padding_bottom, padding_left,
         padding_right, cv::BORDER_REPLICATE);

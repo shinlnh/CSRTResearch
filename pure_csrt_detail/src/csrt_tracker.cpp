@@ -3,58 +3,9 @@
 #include "../inc/csrt_utils.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <numeric>
 
 namespace csrt {
-
-namespace {
-
-float Clamp01(float value) {
-    return std::min(1.0f, std::max(0.0f, value));
-}
-
-void UpdateWindow(std::deque<float> &window, float value, int max_size) {
-    if (max_size <= 0) {
-        return;
-    }
-    window.push_back(value);
-    if (static_cast<int>(window.size()) > max_size) {
-        window.pop_front();
-    }
-}
-
-float WindowMin(const std::deque<float> &window, float fallback) {
-    if (window.empty()) {
-        return fallback;
-    }
-    return *std::min_element(window.begin(), window.end());
-}
-
-float WindowMax(const std::deque<float> &window, float fallback) {
-    if (window.empty()) {
-        return fallback;
-    }
-    return *std::max_element(window.begin(), window.end());
-}
-
-float ComputeApce(const cv::Mat &response, float eps) {
-    double min_val = 0.0;
-    double max_val = 0.0;
-    cv::minMaxLoc(response, &min_val, &max_val, nullptr, nullptr);
-    cv::Mat diff = response - min_val;
-    cv::Mat diff_sq;
-    cv::multiply(diff, diff, diff_sq);
-    cv::Scalar mean_val = cv::mean(diff_sq);
-    float denom = static_cast<float>(mean_val[0] + eps);
-    float num = static_cast<float>((max_val - min_val) * (max_val - min_val));
-    if (denom <= 0.0f) {
-        return 0.0f;
-    }
-    return num / denom;
-}
-
-}  // namespace
 
 class ParallelCreateCsrFilter : public cv::ParallelLoopBody {
 public:
@@ -136,13 +87,9 @@ float CsrtTracker::ComputePsr(const cv::Mat &response, const cv::Point &peak) co
 }
 
 cv::Mat CsrtTracker::CalculateResponse(const cv::Mat &image, const std::vector<cv::Mat> &filter) {
-    float search_scale = std::max(0.01f, search_scale_factor_);
-    int patch_w = std::max(1, cvFloor(current_scale_factor_ * search_scale * template_size_.width));
-    int patch_h = std::max(1, cvFloor(current_scale_factor_ * search_scale * template_size_.height));
-    cv::Mat patch = GetSubwindow(image, object_center_, patch_w, patch_h);
-    if (patch.empty()) {
-        return cv::Mat();
-    }
+    cv::Mat patch = GetSubwindow(image, object_center_,
+        cvFloor(current_scale_factor_ * template_size_.width),
+        cvFloor(current_scale_factor_ * template_size_.height));
     cv::resize(patch, patch, rescaled_template_size_, 0, 0, cv::INTER_CUBIC);
 
     std::vector<cv::Mat> features = GetFeatures(patch, yf_.size());
@@ -171,9 +118,6 @@ void CsrtTracker::UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask) {
     cv::Mat patch = GetSubwindow(image, object_center_,
         cvFloor(current_scale_factor_ * template_size_.width),
         cvFloor(current_scale_factor_ * template_size_.height));
-    if (patch.empty()) {
-        return;
-    }
     cv::resize(patch, patch, rescaled_template_size_, 0, 0, cv::INTER_CUBIC);
 
     std::vector<cv::Mat> features = GetFeatures(patch, yf_.size());
@@ -294,9 +238,6 @@ cv::Mat CsrtTracker::SegmentRegion(const cv::Mat &image, const cv::Point2f &obje
     cv::Mat patch = GetSubwindow(image, object_center,
         cvFloor(scale_factor * template_size.width),
         cvFloor(scale_factor * template_size.height), &valid_pixels);
-    if (patch.empty()) {
-        return cv::Mat();
-    }
 
     cv::Size2f scaled_target(target_size.width * scale_factor,
         target_size.height * scale_factor);
@@ -369,29 +310,15 @@ cv::Point2f CsrtTracker::EstimateNewPosition(const cv::Mat &image) {
     cv::Mat response = CalculateResponse(image, csr_filter_);
     last_response_ = response.clone();
 
-    if (response.empty()) {
-        last_peak_ = 0.0f;
-        last_psr_ = 0.0f;
-        last_apce_ = 0.0f;
-        UpdateWindow(apce_history_, last_apce_, params_.apce_window);
-        float apce_min = WindowMin(apce_history_, last_apce_);
-        float apce_max = WindowMax(apce_history_, last_apce_);
-        last_apce_norm_ = Clamp01((last_apce_ - apce_min) /
-            (apce_max - apce_min + params_.apce_norm_eps));
-        return object_center_;
-    }
-
     double max_val = 0.0;
     cv::Point max_loc;
     cv::minMaxLoc(response, nullptr, &max_val, nullptr, &max_loc);
     last_peak_ = static_cast<float>(max_val);
     last_psr_ = ComputePsr(response, max_loc);
-    last_apce_ = ComputeApce(response, params_.apce_eps);
-    UpdateWindow(apce_history_, last_apce_, params_.apce_window);
-    float apce_min = WindowMin(apce_history_, last_apce_);
-    float apce_max = WindowMax(apce_history_, last_apce_);
-    last_apce_norm_ = Clamp01((last_apce_ - apce_min) /
-        (apce_max - apce_min + params_.apce_norm_eps));
+
+    if (max_val < params_.psr_threshold) {
+        return cv::Point2f(-1, -1);
+    }
 
     float col = static_cast<float>(max_loc.x) + SubpixelPeak(response, "horizontal", max_loc);
     float row = static_cast<float>(max_loc.y) + SubpixelPeak(response, "vertical", max_loc);
@@ -403,10 +330,9 @@ cv::Point2f CsrtTracker::EstimateNewPosition(const cv::Mat &image) {
         col = col - response.cols;
     }
 
-    float search_scale = std::max(0.01f, search_scale_factor_);
     cv::Point2f new_center = object_center_ +
-        cv::Point2f(search_scale * current_scale_factor_ * (1.0f / rescale_ratio_) * cell_size_ * col,
-            search_scale * current_scale_factor_ * (1.0f / rescale_ratio_) * cell_size_ * row);
+        cv::Point2f(current_scale_factor_ * (1.0f / rescale_ratio_) * cell_size_ * col,
+            current_scale_factor_ * (1.0f / rescale_ratio_) * cell_size_ * row);
 
     if (new_center.x < 0) {
         new_center.x = 0;
@@ -432,103 +358,34 @@ bool CsrtTracker::Update(const cv::Mat &image, cv::Rect &bounding_box) {
         frame = image;
     }
 
-    cv::Point2f kf_pred_center = object_center_;
-    bool accept_measurement = true;
-
-    // Estimate position using correlation filter from current position.
-    cv::Point2f measured_center = EstimateNewPosition(frame);
-
-    if (params_.use_kf && kf_initialized_) {
-        cv::Mat pred = kf_.predict();
-        kf_pred_center.x = pred.at<float>(0);
-        kf_pred_center.y = pred.at<float>(1);
-        
-        accept_measurement = last_apce_ >= params_.apce_gate_threshold;
-        if (params_.apce_gate_threshold <= 0.0f) {
-            accept_measurement = true;
-        }
-        last_measurement_accepted_ = accept_measurement;
-        
-        float r_t = params_.kf_r_min + (params_.kf_r_max - params_.kf_r_min) * (1.0f - last_apce_norm_);
-        r_t = std::max(r_t, 1e-6f);
-        kf_.measurementNoiseCov = (cv::Mat_<float>(2, 2) << r_t, 0.0f, 0.0f, r_t);
-
-        if (accept_measurement) {
-            cv::Mat meas(2, 1, CV_32F);
-            meas.at<float>(0) = measured_center.x;
-            meas.at<float>(1) = measured_center.y;
-            cv::Mat corrected = kf_.correct(meas);
-            object_center_.x = corrected.at<float>(0);
-            object_center_.y = corrected.at<float>(1);
-        } else {
-            // Skip correction and keep prediction if measurement is unreliable.
-            kf_.statePost = kf_.statePre;
-            kf_.errorCovPost = kf_.errorCovPre;
-            object_center_ = kf_pred_center;
-        }
-    } else {
-        object_center_ = measured_center;
-    }
-    object_center_.x = std::min(std::max(object_center_.x, 0.0f),
-        static_cast<float>(image_size_.width - 1));
-    object_center_.y = std::min(std::max(object_center_.y, 0.0f),
-        static_cast<float>(image_size_.height - 1));
-
-    if (params_.use_kf && kf_initialized_) {
-        const cv::Mat &cov = accept_measurement ? kf_.errorCovPost : kf_.errorCovPre;
-        last_kf_trace_ = cov.at<float>(0, 0) + cov.at<float>(1, 1);
-        UpdateWindow(kf_trace_history_, last_kf_trace_, params_.kf_trace_window);
-        float p_min = WindowMin(kf_trace_history_, last_kf_trace_);
-        float p_max = WindowMax(kf_trace_history_, last_kf_trace_);
-        last_kf_uncert_ = Clamp01((last_kf_trace_ - p_min) /
-            (p_max - p_min + params_.apce_norm_eps));
-    } else {
-        last_kf_trace_ = 0.0f;
-        last_kf_uncert_ = 0.0f;
+    object_center_ = EstimateNewPosition(frame);
+    if (object_center_.x < 0 && object_center_.y < 0) {
+        return false;
     }
 
-    float s_min = params_.search_scale_min;
-    float s_max = params_.search_scale_max;
-    if (s_min > s_max) {
-        std::swap(s_min, s_max);
-    }
-    search_scale_factor_ = s_min + (s_max - s_min) *
-        std::max(1.0f - last_apce_norm_, last_kf_uncert_);
-
-    if (accept_measurement) {
-        float new_scale = dsst_.GetScale(frame, object_center_);
-        if (std::isfinite(new_scale) && new_scale > 0.0f) {
-            current_scale_factor_ = new_scale;
-        }
-    }
+    current_scale_factor_ = dsst_.GetScale(frame, object_center_);
     bounding_box_.x = object_center_.x - current_scale_factor_ * original_target_size_.width / 2.0f;
     bounding_box_.y = object_center_.y - current_scale_factor_ * original_target_size_.height / 2.0f;
     bounding_box_.width = current_scale_factor_ * original_target_size_.width;
     bounding_box_.height = current_scale_factor_ * original_target_size_.height;
 
-    if (accept_measurement) {
-        if (params_.use_segmentation) {
-            cv::Mat hsv_image = BgrToHsv(frame);
-            UpdateHistograms(hsv_image, bounding_box_);
-            filter_mask_ = SegmentRegion(hsv_image, object_center_, template_size_,
-                original_target_size_, current_scale_factor_);
-            if (filter_mask_.empty()) {
-                filter_mask_ = default_mask_;
-            } else {
-                cv::resize(filter_mask_, filter_mask_, yf_.size(), 0, 0, cv::INTER_NEAREST);
-                if (CheckMaskArea(filter_mask_, default_mask_area_)) {
-                    cv::dilate(filter_mask_, filter_mask_, erode_element_);
-                } else {
-                    filter_mask_ = default_mask_;
-                }
-            }
+    if (params_.use_segmentation) {
+        cv::Mat hsv_image = BgrToHsv(frame);
+        UpdateHistograms(hsv_image, bounding_box_);
+        filter_mask_ = SegmentRegion(hsv_image, object_center_, template_size_,
+            original_target_size_, current_scale_factor_);
+        cv::resize(filter_mask_, filter_mask_, yf_.size(), 0, 0, cv::INTER_NEAREST);
+        if (CheckMaskArea(filter_mask_, default_mask_area_)) {
+            cv::dilate(filter_mask_, filter_mask_, erode_element_);
         } else {
             filter_mask_ = default_mask_;
         }
-
-        UpdateCsrFilter(frame, filter_mask_);
-        dsst_.Update(frame, object_center_);
+    } else {
+        filter_mask_ = default_mask_;
     }
+
+    UpdateCsrFilter(frame, filter_mask_);
+    dsst_.Update(frame, object_center_);
     bounding_box = bounding_box_;
     return true;
 }
@@ -568,41 +425,6 @@ bool CsrtTracker::Init(const cv::Mat &image, const cv::Rect &bounding_box) {
         static_cast<float>(bounding_box.x) + original_target_size_.width / 2.0f,
         static_cast<float>(bounding_box.y) + original_target_size_.height / 2.0f);
 
-    apce_history_.clear();
-    kf_trace_history_.clear();
-    last_apce_ = 0.0f;
-    last_apce_norm_ = 0.0f;
-    last_kf_trace_ = 0.0f;
-    last_kf_uncert_ = 0.0f;
-    last_measurement_accepted_ = true;
-    search_scale_factor_ = 1.0f;
-
-    if (params_.use_kf) {
-        kf_ = cv::KalmanFilter(4, 2, 0, CV_32F);
-        kf_.transitionMatrix = (cv::Mat_<float>(4, 4) <<
-            1.0f, 0.0f, 1.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 1.0f,
-            0.0f, 0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f);
-        kf_.measurementMatrix = (cv::Mat_<float>(2, 4) <<
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f);
-        kf_.processNoiseCov = cv::Mat::zeros(4, 4, CV_32F);
-        kf_.processNoiseCov.at<float>(0, 0) = params_.kf_q_pos;
-        kf_.processNoiseCov.at<float>(1, 1) = params_.kf_q_pos;
-        kf_.processNoiseCov.at<float>(2, 2) = params_.kf_q_vel;
-        kf_.processNoiseCov.at<float>(3, 3) = params_.kf_q_vel;
-        kf_.measurementNoiseCov = (cv::Mat_<float>(2, 2) <<
-            params_.kf_r_min, 0.0f,
-            0.0f, params_.kf_r_min);
-        kf_.errorCovPost = cv::Mat::eye(4, 4, CV_32F) * params_.kf_p_init;
-        kf_.statePost = (cv::Mat_<float>(4, 1) <<
-            object_center_.x, object_center_.y, 0.0f, 0.0f);
-        kf_initialized_ = true;
-    } else {
-        kf_initialized_ = false;
-    }
-
     yf_ = GaussianShapedLabels(params_.gsl_sigma,
         rescaled_template_size_.width / cell_size_,
         rescaled_template_size_.height / cell_size_);
@@ -633,24 +455,20 @@ bool CsrtTracker::Init(const cv::Mat &image, const cv::Rect &bounding_box) {
         filter_mask_ = SegmentRegion(hsv_img, object_center_, template_size_,
             original_target_size_, current_scale_factor_);
 
-        if (filter_mask_.empty()) {
-            filter_mask_ = default_mask_;
-        } else {
-            if (!preset_mask_.empty()) {
-                cv::Mat padded_mask = cv::Mat::zeros(filter_mask_.size(), filter_mask_.type());
-                int sx = std::max(static_cast<int>(cvFloor(padded_mask.cols / 2.0 - preset_mask_.cols / 2.0)) - 1, 0);
-                int sy = std::max(static_cast<int>(cvFloor(padded_mask.rows / 2.0 - preset_mask_.rows / 2.0)) - 1, 0);
-                preset_mask_.copyTo(padded_mask(cv::Rect(sx, sy, preset_mask_.cols, preset_mask_.rows)));
-                filter_mask_ = filter_mask_.mul(padded_mask);
-            }
+        if (!preset_mask_.empty()) {
+            cv::Mat padded_mask = cv::Mat::zeros(filter_mask_.size(), filter_mask_.type());
+            int sx = std::max(static_cast<int>(cvFloor(padded_mask.cols / 2.0 - preset_mask_.cols / 2.0)) - 1, 0);
+            int sy = std::max(static_cast<int>(cvFloor(padded_mask.rows / 2.0 - preset_mask_.rows / 2.0)) - 1, 0);
+            preset_mask_.copyTo(padded_mask(cv::Rect(sx, sy, preset_mask_.cols, preset_mask_.rows)));
+            filter_mask_ = filter_mask_.mul(padded_mask);
+        }
 
-            erode_element_ = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3), cv::Point(1, 1));
-            cv::resize(filter_mask_, filter_mask_, yf_.size(), 0, 0, cv::INTER_NEAREST);
-            if (CheckMaskArea(filter_mask_, default_mask_area_)) {
-                cv::dilate(filter_mask_, filter_mask_, erode_element_);
-            } else {
-                filter_mask_ = default_mask_;
-            }
+        erode_element_ = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3), cv::Point(1, 1));
+        cv::resize(filter_mask_, filter_mask_, yf_.size(), 0, 0, cv::INTER_NEAREST);
+        if (CheckMaskArea(filter_mask_, default_mask_area_)) {
+            cv::dilate(filter_mask_, filter_mask_, erode_element_);
+        } else {
+            filter_mask_ = default_mask_;
         }
     } else {
         filter_mask_ = default_mask_;

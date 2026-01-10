@@ -1,7 +1,5 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/tracking.hpp>
-#include <opencv2/core/cuda.hpp>
-#include <opencv2/core/ocl.hpp>
 
 #include <array>
 #include <algorithm>
@@ -11,12 +9,9 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
-#include <thread>
-#include <unordered_map>
 #include <vector>
 
 #include "../inc/csrt_tracker.hpp"
@@ -77,13 +72,7 @@ struct TrackerPairMetrics {
 };
 
 void PrintUsage() {
-    std::cout << "Usage: otb_compare --dataset-root <path> [options]\n";
-    std::cout << "Options:\n";
-    std::cout << "  --output <csv>       Output CSV file (default: auc_compare.csv)\n";
-    std::cout << "  --max-frames <n>     Limit frames per sequence\n";
-    std::cout << "  --pure-csv <csv>     Load OpenCV CSRT baseline from CSV (optional, for fast mode)\n";
-    std::cout << "  --help               Show this help\n";
-    std::cout << "\nDefault: Run both update_csrt and OpenCV CSRT for comparison\n";
+    std::cout << "Usage: otb_compare --dataset-root <path> [--output <csv>] [--max-frames <n>]\n";
 }
 
 std::vector<fs::path> CollectFramePaths(const fs::path &img_dir) {
@@ -336,13 +325,6 @@ double PrecisionAt(const std::vector<double> &values, double threshold) {
     return values.empty() ? 0.0 : static_cast<double>(ok) / static_cast<double>(values.size());
 }
 
-double SuccessRate(const std::vector<double> &ious, double threshold) {
-    const auto ok = std::count_if(ious.begin(), ious.end(), [threshold](double iou) {
-        return iou >= threshold;
-    });
-    return ious.empty() ? 0.0 : static_cast<double>(ok) / static_cast<double>(ious.size());
-}
-
 TrackerMetrics ComputeMetrics(const std::vector<double> &ious,
     const std::vector<double> &errors, double tracking_seconds) {
     TrackerMetrics metrics;
@@ -358,149 +340,10 @@ TrackerMetrics ComputeMetrics(const std::vector<double> &ious,
 
     const auto curve = SuccessCurve(ious, thresholds);
     metrics.auc = TrapezoidAuc(thresholds, curve);
-    metrics.success50 = SuccessRate(ious, 0.5);
+    metrics.success50 = PrecisionAt(ious, 0.5);
     metrics.precision20 = PrecisionAt(errors, 20.0);
     metrics.fps = tracking_seconds > 0.0 ? static_cast<double>(ious.size()) / tracking_seconds : 0.0;
     return metrics;
-}
-
-struct BaselineMetrics {
-    std::size_t frames{0};
-    double auc{0.0};
-    double success50{0.0};
-    double precision20{0.0};
-    double fps{0.0};
-};
-
-struct BaselineData {
-    std::unordered_map<std::string, BaselineMetrics> per_sequence;
-    std::optional<BaselineMetrics> overall;
-};
-
-std::vector<std::string> SplitCsvLine(const std::string &line) {
-    std::vector<std::string> tokens;
-    std::stringstream ss(line);
-    std::string token;
-    while (std::getline(ss, token, ',')) {
-        tokens.push_back(token);
-    }
-    return tokens;
-}
-
-std::optional<BaselineData> LoadBaselineCsv(const fs::path &csv_path) {
-    std::ifstream in(csv_path);
-    if (!in.is_open()) {
-        std::cerr << "Failed to open baseline CSV: " << csv_path << "\n";
-        return std::nullopt;
-    }
-
-    BaselineData data;
-    std::string line;
-    bool first = true;
-    while (std::getline(in, line)) {
-        if (line.empty()) {
-            continue;
-        }
-        if (first) {
-            first = false;
-            if (line.find("sequence") != std::string::npos) {
-                continue;
-            }
-        }
-        const auto tokens = SplitCsvLine(line);
-        if (tokens.size() < 6) {
-            continue;
-        }
-        const std::string &name = tokens[0];
-        BaselineMetrics m;
-        m.frames = static_cast<std::size_t>(std::stoull(tokens[1]));
-        m.auc = std::stod(tokens[2]);
-        m.success50 = std::stod(tokens[3]);
-        m.precision20 = std::stod(tokens[4]);
-        m.fps = std::stod(tokens[5]);
-        if (name == "OVERALL") {
-            data.overall = m;
-        } else {
-            data.per_sequence[name] = m;
-        }
-    }
-    if (data.per_sequence.empty()) {
-        std::cerr << "Baseline CSV has no per-sequence entries: " << csv_path << "\n";
-        return std::nullopt;
-    }
-    return data;
-}
-
-TrackerMetrics MetricsFromBaseline(const BaselineMetrics &baseline) {
-    TrackerMetrics metrics;
-    metrics.auc = baseline.auc;
-    metrics.success50 = baseline.success50;
-    metrics.precision20 = baseline.precision20;
-    metrics.fps = baseline.fps;
-    return metrics;
-}
-
-TrackerMetrics EvaluateUpdateOnly(const SequenceData &data, const std::optional<int> &max_frames) {
-    TrackerMetrics metrics;
-    if (data.frames.empty() || data.ground_truth.empty()) {
-        return metrics;
-    }
-
-    cv::Mat first = cv::imread(data.frames.front().string(), cv::IMREAD_COLOR);
-    if (first.empty()) {
-        return metrics;
-    }
-
-    const auto init_box = data.ground_truth.front();
-    cv::Rect init_rect(
-        static_cast<int>(std::round(init_box.x)),
-        static_cast<int>(std::round(init_box.y)),
-        static_cast<int>(std::round(init_box.width)),
-        static_cast<int>(std::round(init_box.height)));
-
-    csrt::CsrtTracker update_tracker;
-    if (!update_tracker.Init(first, init_rect)) {
-        return metrics;
-    }
-
-    const std::size_t limit = max_frames
-        ? std::min<std::size_t>(*max_frames, data.frames.size())
-        : data.frames.size();
-
-    std::vector<double> ious_update;
-    std::vector<double> errors_update;
-    ious_update.reserve(limit);
-    errors_update.reserve(limit);
-
-    double update_seconds = 0.0;
-
-    for (std::size_t i = 0; i < limit; ++i) {
-        cv::Mat frame = (i == 0) ? first.clone() : cv::imread(data.frames[i].string(), cv::IMREAD_COLOR);
-        if (frame.empty()) {
-            break;
-        }
-
-        cv::Rect bbox_update;
-        const auto t0 = std::chrono::steady_clock::now();
-        const bool ok_update = update_tracker.Update(frame, bbox_update);
-        const auto t1 = std::chrono::steady_clock::now();
-        update_seconds += std::chrono::duration<double>(t1 - t0).count();
-
-        std::optional<BoundingBox> pred_update;
-        if (ok_update) {
-            pred_update = BoundingBox{static_cast<double>(bbox_update.x), static_cast<double>(bbox_update.y),
-                static_cast<double>(bbox_update.width), static_cast<double>(bbox_update.height)};
-        }
-
-        const auto &gt = data.ground_truth[i];
-        const double iou_update = pred_update ? pred_update->iou(gt) : 0.0;
-        const double error_update = pred_update ? CenterError(*pred_update, gt) : std::numeric_limits<double>::infinity();
-
-        ious_update.push_back(iou_update);
-        errors_update.push_back(error_update);
-    }
-
-    return ComputeMetrics(ious_update, errors_update, update_seconds);
 }
 
 TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optional<int> &max_frames) {
@@ -594,39 +437,9 @@ TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optiona
 }  // namespace
 
 int main(int argc, char **argv) {
-    // Initialize GPU/CUDA support
-    std::cout << "=== GPU/CUDA Configuration ===" << std::endl;
-    
-    // Check CUDA availability
-    int cuda_devices = cv::cuda::getCudaEnabledDeviceCount();
-    if (cuda_devices > 0) {
-        std::cout << "CUDA devices found: " << cuda_devices << std::endl;
-        cv::cuda::DeviceInfo dev_info(0);
-        std::cout << "  Device 0: " << dev_info.name() << std::endl;
-        std::cout << "  Compute capability: " << dev_info.majorVersion() << "." << dev_info.minorVersion() << std::endl;
-        std::cout << "  Total memory: " << (dev_info.totalMemory() / (1024*1024)) << " MB" << std::endl;
-        cv::cuda::setDevice(0);
-        std::cout << "  Using CUDA device 0" << std::endl;
-    } else {
-        std::cout << "No CUDA devices found" << std::endl;
-    }
-    
-    // Check OpenCL availability
-    if (cv::ocl::haveOpenCL()) {
-        cv::ocl::setUseOpenCL(true);
-        if (cv::ocl::useOpenCL()) {
-            std::cout << "OpenCL enabled: " << cv::ocl::Device::getDefault().name() << std::endl;
-        }
-    } else {
-        std::cout << "OpenCL not available" << std::endl;
-    }
-    
-    std::cout << "==============================" << std::endl << std::endl;
-
     fs::path dataset_root;
     fs::path output_path = "auc_compare.csv";  // Write to current directory
     std::optional<int> max_frames;
-    std::optional<fs::path> pure_csv_path = std::nullopt;  // Default: run both trackers
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -636,8 +449,6 @@ int main(int argc, char **argv) {
             output_path = argv[++i];
         } else if (arg == "--max-frames" && i + 1 < argc) {
             max_frames = std::stoi(argv[++i]);
-        } else if (arg == "--pure-csv" && i + 1 < argc) {
-            pure_csv_path = argv[++i];
         } else if (arg == "--help") {
             PrintUsage();
             return 0;
@@ -656,44 +467,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    std::optional<BaselineData> baseline;
-    if (pure_csv_path) {
-        if (!fs::exists(*pure_csv_path)) {
-            std::cout << "Warning: Baseline CSV not found: " << *pure_csv_path << "\n";
-            std::cout << "Falling back to running both trackers...\n\n";
-            pure_csv_path = std::nullopt;
-        } else {
-            baseline = LoadBaselineCsv(*pure_csv_path);
-            if (!baseline) {
-                std::cout << "Warning: Failed to load baseline CSV, running both trackers...\n\n";
-                pure_csv_path = std::nullopt;
-            } else {
-                bool all_found = true;
-                for (const auto &seq : sequences) {
-                    if (baseline->per_sequence.find(seq.name) == baseline->per_sequence.end()) {
-                        std::cerr << "Warning: Baseline CSV missing sequence: " << seq.name << "\n";
-                        all_found = false;
-                    }
-                }
-                if (!all_found || !baseline->overall) {
-                    std::cout << "Warning: Baseline incomplete, running both trackers...\n\n";
-                    baseline = std::nullopt;
-                    pure_csv_path = std::nullopt;
-                } else {
-                    std::cout << "Using baseline from: " << *pure_csv_path << "\n";
-                    std::cout << "Only running update_csrt (faster mode)...\n\n";
-                    if (max_frames) {
-                        std::cout << "Warning: --max-frames with --pure-csv may be inconsistent with baseline.\n";
-                    }
-                }
-            }
-        }
-    }
-    
-    if (!pure_csv_path) {
-        std::cout << "Running both update_csrt and OpenCV CSRT for comparison...\n\n";
-    }
-    
     std::ofstream out(output_path);
     if (!out.is_open()) {
         std::cerr << "Failed to open output file: " << output_path << "\n";
@@ -704,59 +477,20 @@ int main(int argc, char **argv) {
 
     std::vector<double> all_ious_update;
     std::vector<double> all_errors_update;
+    std::vector<double> all_ious_pure;
+    std::vector<double> all_errors_pure;
     double total_seconds_update = 0.0;
+    double total_seconds_pure = 0.0;
     std::size_t total_frames = 0;
 
     std::cout << "Comparing trackers on " << sequences.size() << " sequence(s)...\n";
 
-    // Parallel processing
-    const unsigned int num_threads = std::thread::hardware_concurrency();
-    std::cout << "Using " << num_threads << " threads for parallel processing\n\n";
-    
-    std::vector<TrackerPairMetrics> all_metrics(sequences.size());
-    std::mutex cout_mutex;
-    
-    auto process_batch = [&](std::size_t start_idx, std::size_t end_idx) {
-        for (std::size_t i = start_idx; i < end_idx; ++i) {
-            const auto &seq = sequences[i];
-            
-            {
-                std::lock_guard<std::mutex> lock(cout_mutex);
-                std::cout << "  [Thread " << std::this_thread::get_id() << "] " 
-                          << seq.name << " (" << seq.frames.size() << " frames)" << std::endl;
-            }
-            
-            if (baseline) {
-                all_metrics[i].update = EvaluateUpdateOnly(seq, max_frames);
-                const auto &base_metrics = baseline->per_sequence.at(seq.name);
-                all_metrics[i].pure = MetricsFromBaseline(base_metrics);
-            } else {
-                all_metrics[i] = EvaluateTrackers(seq, max_frames);
-            }
-        }
-    };
-    
-    std::vector<std::thread> threads;
-    const std::size_t batch_size = (sequences.size() + num_threads - 1) / num_threads;
-    
-    for (unsigned int t = 0; t < num_threads; ++t) {
-        std::size_t start_idx = t * batch_size;
-        std::size_t end_idx = std::min(start_idx + batch_size, sequences.size());
-        if (start_idx < sequences.size()) {
-            threads.emplace_back(process_batch, start_idx, end_idx);
-        }
-    }
-    
-    for (auto &thread : threads) {
-        thread.join();
-    }
-    
-    std::cout << "\nWriting results...\n";
-    
-    for (std::size_t i = 0; i < sequences.size(); ++i) {
-        const auto &seq = sequences[i];
-        const auto &update_metrics = all_metrics[i].update;
-        const auto &pure_metrics = all_metrics[i].pure;
+    for (const auto &seq : sequences) {
+        std::cout << "  " << seq.name << " (" << seq.frames.size() << " frames)" << std::endl;
+
+        const auto metrics_pair = EvaluateTrackers(seq, max_frames);
+        const auto &update_metrics = metrics_pair.update;
+        const auto &pure_metrics = metrics_pair.pure;
 
         const double delta_auc = update_metrics.auc - pure_metrics.auc;
 
@@ -770,25 +504,15 @@ int main(int argc, char **argv) {
 
         all_ious_update.insert(all_ious_update.end(), update_metrics.ious.begin(), update_metrics.ious.end());
         all_errors_update.insert(all_errors_update.end(), update_metrics.errors.begin(), update_metrics.errors.end());
+        all_ious_pure.insert(all_ious_pure.end(), pure_metrics.ious.begin(), pure_metrics.ious.end());
+        all_errors_pure.insert(all_errors_pure.end(), pure_metrics.errors.begin(), pure_metrics.errors.end());
         total_seconds_update += update_metrics.tracking_seconds;
+        total_seconds_pure += pure_metrics.tracking_seconds;
         total_frames += seq.frames.size();
     }
 
     const auto overall_update = ComputeMetrics(all_ious_update, all_errors_update, total_seconds_update);
-    TrackerMetrics overall_pure;
-    if (baseline) {
-        overall_pure = MetricsFromBaseline(*baseline->overall);
-    } else {
-        std::vector<double> all_ious_pure;
-        std::vector<double> all_errors_pure;
-        double total_seconds_pure = 0.0;
-        for (const auto &entry : all_metrics) {
-            all_ious_pure.insert(all_ious_pure.end(), entry.pure.ious.begin(), entry.pure.ious.end());
-            all_errors_pure.insert(all_errors_pure.end(), entry.pure.errors.begin(), entry.pure.errors.end());
-            total_seconds_pure += entry.pure.tracking_seconds;
-        }
-        overall_pure = ComputeMetrics(all_ious_pure, all_errors_pure, total_seconds_pure);
-    }
+    const auto overall_pure = ComputeMetrics(all_ious_pure, all_errors_pure, total_seconds_pure);
     const double overall_delta_auc = overall_update.auc - overall_pure.auc;
 
     out << "OVERALL," << total_frames << ","

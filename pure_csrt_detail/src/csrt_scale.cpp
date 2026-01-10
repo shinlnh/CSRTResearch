@@ -21,9 +21,6 @@ public:
                 static_cast<int>(current_scale_ * scale_factors_[s] * base_target_size_.width),
                 static_cast<int>(current_scale_ * scale_factors_[s] * base_target_size_.height));
             cv::Mat img_patch = GetSubwindow(image_, pos_, patch_size.width, patch_size.height);
-            if (img_patch.empty()) {
-                continue;
-            }
             img_patch.convertTo(img_patch, CV_32FC3);
             cv::resize(img_patch, img_patch, scale_model_size_, 0, 0, cv::INTER_LINEAR);
             std::vector<cv::Mat> hog = GetFeaturesHog(img_patch, 4);
@@ -90,9 +87,6 @@ DSST::DSST(const cv::Mat &image, const cv::Rect2f &bounding_box, const cv::Size2
 
     cv::Mat scale_resp = GetScaleFeatures(image, object_center, original_target_size_,
         current_scale_factor_, scale_factors_, scale_window_, scale_model_size_);
-    if (scale_resp.empty()) {
-        scale_resp = cv::Mat::zeros(1, scales_count_, CV_32F);
-    }
 
     cv::Mat ysf_row(ys_.size(), CV_32FC2);
     cv::dft(ys_, ysf_row, cv::DFT_ROWS | cv::DFT_COMPLEX_OUTPUT, 0);
@@ -118,14 +112,11 @@ cv::Mat DSST::GetScaleFeatures(const cv::Mat &image, const cv::Point2f &pos,
         cvFloor(current_scale * scale_factors[0] * base_target_size.width),
         cvFloor(current_scale * scale_factors[0] * base_target_size.height));
     cv::Mat img_patch = GetSubwindow(image, pos, patch_size.width, patch_size.height);
-    if (img_patch.empty()) {
-        return cv::Mat();
-    }
     img_patch.convertTo(img_patch, CV_32FC3);
     cv::resize(img_patch, img_patch, scale_model_size, 0, 0, cv::INTER_LINEAR);
 
     std::vector<cv::Mat> hog = GetFeaturesHog(img_patch, 4);
-    result = cv::Mat::zeros(cv::Size(static_cast<int>(scale_factors.size()),
+    result = cv::Mat(cv::Size(static_cast<int>(scale_factors.size()),
         hog[0].cols * hog[0].rows * static_cast<int>(hog.size())), CV_32F);
     col_len = hog[0].cols * hog[0].rows;
 
@@ -144,9 +135,6 @@ cv::Mat DSST::GetScaleFeatures(const cv::Mat &image, const cv::Point2f &pos,
 void DSST::Update(const cv::Mat &image, const cv::Point2f &object_center) {
     cv::Mat scale_features = GetScaleFeatures(image, object_center, original_target_size_,
         current_scale_factor_, scale_factors_, scale_window_, scale_model_size_);
-    if (scale_features.empty()) {
-        return;
-    }
     cv::Mat fscale_features;
     cv::dft(scale_features, fscale_features, cv::DFT_ROWS | cv::DFT_COMPLEX_OUTPUT);
 
@@ -164,9 +152,6 @@ void DSST::Update(const cv::Mat &image, const cv::Point2f &object_center) {
 float DSST::GetScale(const cv::Mat &image, const cv::Point2f &object_center) {
     cv::Mat scale_features = GetScaleFeatures(image, object_center, original_target_size_,
         current_scale_factor_, scale_factors_, scale_window_, scale_model_size_);
-    if (scale_features.empty()) {
-        return current_scale_factor_;
-    }
 
     cv::Mat fscale_features;
     cv::dft(scale_features, fscale_features, cv::DFT_ROWS | cv::DFT_COMPLEX_OUTPUT);
