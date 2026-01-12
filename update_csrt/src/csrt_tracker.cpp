@@ -38,6 +38,14 @@ float WindowMax(const std::deque<float> &window, float fallback) {
     return *std::max_element(window.begin(), window.end());
 }
 
+float WindowMean(const std::deque<float> &window, float fallback) {
+    if (window.empty()) {
+        return fallback;
+    }
+    float sum = std::accumulate(window.begin(), window.end(), 0.0f);
+    return sum / static_cast<float>(window.size());
+}
+
 float ComputeApce(const cv::Mat &response, float eps) {
     double min_val = 0.0;
     double max_val = 0.0;
@@ -167,7 +175,12 @@ cv::Mat CsrtTracker::CalculateResponse(const cv::Mat &image, const std::vector<c
     return response;
 }
 
-void CsrtTracker::UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask) {
+void CsrtTracker::UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask, float lr_scale) {
+    const float weights_lr = std::min(1.0f, params_.weights_lr * lr_scale);
+    const float filter_lr = std::min(1.0f, params_.filter_lr * lr_scale);
+    if (weights_lr <= 0.0f && filter_lr <= 0.0f) {
+        return;
+    }
     cv::Mat patch = GetSubwindow(image, object_center_,
         cvFloor(current_scale_factor_ * template_size_.width),
         cvFloor(current_scale_factor_ * template_size_.height));
@@ -195,8 +208,8 @@ void CsrtTracker::UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask) {
 
         float updated_sum = 0.0f;
         for (size_t i = 0; i < filter_weights_.size(); ++i) {
-            filter_weights_[i] = filter_weights_[i] * (1.0f - params_.weights_lr) +
-                params_.weights_lr * (new_filter_weights[i] / sum_weights);
+            filter_weights_[i] = filter_weights_[i] * (1.0f - weights_lr) +
+                weights_lr * (new_filter_weights[i] / sum_weights);
             updated_sum += filter_weights_[i];
         }
 
@@ -206,8 +219,8 @@ void CsrtTracker::UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask) {
     }
 
     for (size_t i = 0; i < csr_filter_.size(); ++i) {
-        csr_filter_[i] = (1.0f - params_.filter_lr) * csr_filter_[i] +
-            params_.filter_lr * new_csr_filter[i];
+        csr_filter_[i] = (1.0f - filter_lr) * csr_filter_[i] +
+            filter_lr * new_csr_filter[i];
     }
 }
 
@@ -346,7 +359,11 @@ void CsrtTracker::ExtractHistograms(const cv::Mat &image, cv::Rect region,
         outer_x1, outer_y1, outer_x2, outer_y2);
 }
 
-void CsrtTracker::UpdateHistograms(const cv::Mat &image, const cv::Rect &region) {
+void CsrtTracker::UpdateHistograms(const cv::Mat &image, const cv::Rect &region, float lr_scale) {
+    const float hist_lr = std::min(1.0f, params_.histogram_lr * lr_scale);
+    if (hist_lr <= 0.0f) {
+        return;
+    }
     Histogram hf(image.channels(), params_.histogram_bins);
     Histogram hb(image.channels(), params_.histogram_bins);
     ExtractHistograms(image, region, hf, hb);
@@ -357,8 +374,8 @@ void CsrtTracker::UpdateHistograms(const cv::Mat &image, const cv::Rect &region)
     std::vector<double> hb_old = hist_background_.GetHistogramVector();
 
     for (size_t i = 0; i < hf_new.size(); ++i) {
-        hf_new[i] = (1.0 - params_.histogram_lr) * hf_old[i] + params_.histogram_lr * hf_new[i];
-        hb_new[i] = (1.0 - params_.histogram_lr) * hb_old[i] + params_.histogram_lr * hb_new[i];
+        hf_new[i] = (1.0 - hist_lr) * hf_old[i] + hist_lr * hf_new[i];
+        hb_new[i] = (1.0 - hist_lr) * hb_old[i] + hist_lr * hb_new[i];
     }
 
     hist_foreground_.SetHistogramVector(hf_new.data());
@@ -373,11 +390,13 @@ cv::Point2f CsrtTracker::EstimateNewPosition(const cv::Mat &image) {
         last_peak_ = 0.0f;
         last_psr_ = 0.0f;
         last_apce_ = 0.0f;
+        last_apce_valid_ = false;
         UpdateWindow(apce_history_, last_apce_, params_.apce_window);
         float apce_min = WindowMin(apce_history_, last_apce_);
         float apce_max = WindowMax(apce_history_, last_apce_);
         last_apce_norm_ = Clamp01((last_apce_ - apce_min) /
             (apce_max - apce_min + params_.apce_norm_eps));
+        last_apce_mean_ = WindowMean(apce_history_, last_apce_);
         return object_center_;
     }
 
@@ -387,11 +406,16 @@ cv::Point2f CsrtTracker::EstimateNewPosition(const cv::Mat &image) {
     last_peak_ = static_cast<float>(max_val);
     last_psr_ = ComputePsr(response, max_loc);
     last_apce_ = ComputeApce(response, params_.apce_eps);
+    last_apce_valid_ = true;
     UpdateWindow(apce_history_, last_apce_, params_.apce_window);
     float apce_min = WindowMin(apce_history_, last_apce_);
     float apce_max = WindowMax(apce_history_, last_apce_);
     last_apce_norm_ = Clamp01((last_apce_ - apce_min) /
         (apce_max - apce_min + params_.apce_norm_eps));
+    last_apce_mean_ = WindowMean(apce_history_, last_apce_);
+    if (init_apce_ <= 0.0f && last_apce_ > 0.0f) {
+        init_apce_ = last_apce_;
+    }
 
     float col = static_cast<float>(max_loc.x) + SubpixelPeak(response, "horizontal", max_loc);
     float row = static_cast<float>(max_loc.y) + SubpixelPeak(response, "vertical", max_loc);
@@ -432,50 +456,131 @@ bool CsrtTracker::Update(const cv::Mat &image, cv::Rect &bounding_box) {
         frame = image;
     }
 
+    const bool has_kf = params_.use_kf && kf_initialized_;
     cv::Point2f kf_pred_center = object_center_;
-    bool accept_measurement = true;
+    last_measured_center_ = cv::Point2f(0.0f, 0.0f);
+    last_kf_pred_center_ = kf_pred_center;
+    last_kf_corrected_center_ = kf_pred_center;
+    last_kf_innov_ = 0.0f;
+    last_kf_innov_thresh_ = 0.0f;
+    float lr_scale = 1.0f;
+    const float prev_psr = last_psr_;
 
-    // Estimate position using correlation filter from current position.
-    cv::Point2f measured_center = EstimateNewPosition(frame);
-
-    if (params_.use_kf && kf_initialized_) {
+    if (has_kf) {
         cv::Mat pred = kf_.predict();
         kf_pred_center.x = pred.at<float>(0);
         kf_pred_center.y = pred.at<float>(1);
-        
-        accept_measurement = last_apce_ >= params_.apce_gate_threshold;
-        if (params_.apce_gate_threshold <= 0.0f) {
-            accept_measurement = true;
+        last_kf_pred_center_ = kf_pred_center;
+        bool use_kf_prior = true;
+        if (params_.kf_prior_mode == 1 && params_.psr_threshold > 0.0f) {
+            use_kf_prior = prev_psr < params_.psr_threshold;
         }
-        last_measurement_accepted_ = accept_measurement;
-        
-        float r_t = params_.kf_r_min + (params_.kf_r_max - params_.kf_r_min) * (1.0f - last_apce_norm_);
+        if (use_kf_prior) {
+            object_center_ = kf_pred_center;
+        }
+    }
+
+    // Estimate position using correlation filter from current position (KF prior if enabled).
+    cv::Point2f measured_center = EstimateNewPosition(frame);
+    last_measured_center_ = measured_center;
+
+    float psr_conf = 1.0f;
+    if (params_.psr_threshold > 0.0f) {
+        psr_conf = Clamp01((last_psr_ - params_.psr_threshold) / params_.psr_threshold);
+    }
+    const bool psr_good = (params_.psr_threshold <= 0.0f) ||
+        (last_psr_ >= params_.psr_threshold);
+
+    float innov_thresh = 0.0f;
+    float innovation = 0.0f;
+    bool innovation_ok = true;
+    if (has_kf) {
+        const float size_ref = std::max({original_target_size_.width, original_target_size_.height, 1.0f});
+        innov_thresh = params_.kf_innov_base + params_.kf_innov_scale * size_ref;
+        const float dx = measured_center.x - kf_pred_center.x;
+        const float dy = measured_center.y - kf_pred_center.y;
+        innovation = std::sqrt(dx * dx + dy * dy);
+        last_kf_innov_ = innovation;
+        last_kf_innov_thresh_ = innov_thresh * params_.kf_innov_hard_scale;
+        innovation_ok = innovation <= last_kf_innov_thresh_;
+    }
+
+    bool kf_update = false;
+    switch (params_.kf_mode) {
+        case 1:
+            kf_update = has_kf;
+            break;
+        case 2:
+            kf_update = has_kf && psr_good;
+            break;
+        case 3:
+            kf_update = has_kf && psr_good && innovation_ok;
+            break;
+        default:
+            kf_update = has_kf && psr_good;
+            break;
+    }
+
+    bool model_update = true;
+    switch (params_.model_lr_mode) {
+        case 0:
+            model_update = true;
+            lr_scale = 1.0f;
+            break;
+        case 1:
+            model_update = psr_good;
+            lr_scale = model_update ? 1.0f : 0.0f;
+            break;
+        case 2:
+            model_update = psr_conf > 0.0f;
+            lr_scale = model_update ? psr_conf : 0.0f;
+            break;
+        case 3:
+            model_update = psr_good && innovation_ok;
+            lr_scale = model_update ? 1.0f : 0.0f;
+            break;
+        default:
+            model_update = psr_good;
+            lr_scale = model_update ? 1.0f : 0.0f;
+            break;
+    }
+
+    if (has_kf) {
+        float r_t = params_.kf_r_max - psr_conf * (params_.kf_r_max - params_.kf_r_min);
+        if (!kf_update) {
+            r_t = params_.kf_r_max;
+        }
         r_t = std::max(r_t, 1e-6f);
+        last_kf_r_ = r_t;
         kf_.measurementNoiseCov = (cv::Mat_<float>(2, 2) << r_t, 0.0f, 0.0f, r_t);
 
-        if (accept_measurement) {
+        if (kf_update) {
             cv::Mat meas(2, 1, CV_32F);
             meas.at<float>(0) = measured_center.x;
             meas.at<float>(1) = measured_center.y;
             cv::Mat corrected = kf_.correct(meas);
-            object_center_.x = corrected.at<float>(0);
-            object_center_.y = corrected.at<float>(1);
+            last_kf_corrected_center_.x = corrected.at<float>(0);
+            last_kf_corrected_center_.y = corrected.at<float>(1);
         } else {
-            // Skip correction and keep prediction if measurement is unreliable.
             kf_.statePost = kf_.statePre;
             kf_.errorCovPost = kf_.errorCovPre;
-            object_center_ = kf_pred_center;
+            last_kf_corrected_center_ = kf_pred_center;
         }
+        last_measurement_accepted_ = kf_update;
     } else {
-        object_center_ = measured_center;
+        last_measurement_accepted_ = model_update;
+        last_kf_r_ = 0.0f;
+        last_kf_innov_ = 0.0f;
+        last_kf_innov_thresh_ = 0.0f;
     }
+
+    object_center_ = measured_center;
     object_center_.x = std::min(std::max(object_center_.x, 0.0f),
         static_cast<float>(image_size_.width - 1));
     object_center_.y = std::min(std::max(object_center_.y, 0.0f),
         static_cast<float>(image_size_.height - 1));
-
     if (params_.use_kf && kf_initialized_) {
-        const cv::Mat &cov = accept_measurement ? kf_.errorCovPost : kf_.errorCovPre;
+        const cv::Mat &cov = kf_.errorCovPost;
         last_kf_trace_ = cov.at<float>(0, 0) + cov.at<float>(1, 1);
         UpdateWindow(kf_trace_history_, last_kf_trace_, params_.kf_trace_window);
         float p_min = WindowMin(kf_trace_history_, last_kf_trace_);
@@ -493,23 +598,36 @@ bool CsrtTracker::Update(const cv::Mat &image, cv::Rect &bounding_box) {
         std::swap(s_min, s_max);
     }
     search_scale_factor_ = s_min + (s_max - s_min) *
-        std::max(1.0f - last_apce_norm_, last_kf_uncert_);
+        std::max(1.0f - psr_conf, last_kf_uncert_);
 
-    if (accept_measurement) {
+    if (model_update) {
         float new_scale = dsst_.GetScale(frame, object_center_);
         if (std::isfinite(new_scale) && new_scale > 0.0f) {
             current_scale_factor_ = new_scale;
         }
     }
+    const float prev_w = bounding_box_.width > 0.0f ? bounding_box_.width : original_target_size_.width;
+    const float prev_h = bounding_box_.height > 0.0f ? bounding_box_.height : original_target_size_.height;
     bounding_box_.x = object_center_.x - current_scale_factor_ * original_target_size_.width / 2.0f;
     bounding_box_.y = object_center_.y - current_scale_factor_ * original_target_size_.height / 2.0f;
     bounding_box_.width = current_scale_factor_ * original_target_size_.width;
     bounding_box_.height = current_scale_factor_ * original_target_size_.height;
+    float size_conf = Clamp01(psr_conf * (1.0f - last_kf_uncert_));
+    if (!model_update) {
+        size_conf = 0.0f;
+    }
+    const float smooth_w = (1.0f - size_conf) * prev_w + size_conf * bounding_box_.width;
+    const float smooth_h = (1.0f - size_conf) * prev_h + size_conf * bounding_box_.height;
+    bounding_box_.width = smooth_w;
+    bounding_box_.height = smooth_h;
+    bounding_box_.x = object_center_.x - smooth_w / 2.0f;
+    bounding_box_.y = object_center_.y - smooth_h / 2.0f;
 
-    if (accept_measurement) {
+
+    if (lr_scale > 0.0f) {
         if (params_.use_segmentation) {
             cv::Mat hsv_image = BgrToHsv(frame);
-            UpdateHistograms(hsv_image, bounding_box_);
+            UpdateHistograms(hsv_image, bounding_box_, lr_scale);
             filter_mask_ = SegmentRegion(hsv_image, object_center_, template_size_,
                 original_target_size_, current_scale_factor_);
             if (filter_mask_.empty()) {
@@ -526,7 +644,7 @@ bool CsrtTracker::Update(const cv::Mat &image, cv::Rect &bounding_box) {
             filter_mask_ = default_mask_;
         }
 
-        UpdateCsrFilter(frame, filter_mask_);
+        UpdateCsrFilter(frame, filter_mask_, lr_scale);
         dsst_.Update(frame, object_center_);
     }
     bounding_box = bounding_box_;
@@ -572,6 +690,9 @@ bool CsrtTracker::Init(const cv::Mat &image, const cv::Rect &bounding_box) {
     kf_trace_history_.clear();
     last_apce_ = 0.0f;
     last_apce_norm_ = 0.0f;
+    last_apce_mean_ = 0.0f;
+    init_apce_ = 0.0f;
+    last_apce_valid_ = false;
     last_kf_trace_ = 0.0f;
     last_kf_uncert_ = 0.0f;
     last_measurement_accepted_ = true;

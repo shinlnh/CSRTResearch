@@ -46,19 +46,32 @@ struct CsrtParams {
 
     float psr_threshold = 0.035f;
 
-    bool use_kf = false;
+    bool use_kf = true;
+    int kf_mode = 1;  // 1: KF prior only, 2: PSR gate, 3: PSR+innovation gate
+    int kf_prior_mode = 1;  // 0: always use KF prior, 1: use KF prior when prev PSR is low
+    int model_lr_mode = 0;  // 0: always, 1: PSR hard, 2: PSR soft, 3: PSR+innovation
     int apce_window = 30;
-    float apce_gate_threshold = 0.0f;
+    float apce_gate_threshold = 0.2f;  // Legacy: normalized APCE gate (unused in paper mode)
+    float apce_beta = 0.7f;            // APCE reliability threshold (beta * mean)
+    float apce_delta = 0.5f;           // APCE occlusion threshold (delta * mean)
+    float apce_redetect_ratio = 0.5f;  // Redetect if APCE > init_apce * ratio
+    float apce_redetect_lr_scale = 1.5f;  // Boost learning rate during redetect
     float apce_eps = 1e-6f;
     float apce_norm_eps = 1e-5f;
     int kf_trace_window = 30;
-    float kf_r_min = 1.0f;
-    float kf_r_max = 10.0f;
+    float kf_r_min = 0.5f;
+    float kf_r_max = 5.0f;
     float kf_q_pos = 1e-2f;
     float kf_q_vel = 1e-4f;
     float kf_p_init = 10.0f;
+    float kf_innov_base = 5.0f;
+    float kf_innov_scale = 0.3f;
+    float kf_innov_apce_scale = 0.0f;
+    float kf_innov_r_scale = 10.0f;
+    float kf_innov_hard_scale = 1.5f;
+    float kf_reject_weight = 0.2f;
     float search_scale_min = 1.0f;
-    float search_scale_max = 1.0f;  // Disable adaptive search scale
+    float search_scale_max = 1.1f;  // Tighter adaptive search scale
 };
 
 class CsrtTracker {
@@ -77,12 +90,36 @@ public:
 
     float GetLastPeak() const { return last_peak_; }
 
+    float GetLastApce() const { return last_apce_; }
+
+    float GetLastApceNorm() const { return last_apce_norm_; }
+
+    float GetLastKfTrace() const { return last_kf_trace_; }
+
+    float GetLastKfUncert() const { return last_kf_uncert_; }
+
+    float GetLastKfR() const { return last_kf_r_; }
+
+    bool GetLastMeasurementAccepted() const { return last_measurement_accepted_; }
+
+    const cv::Point2f &GetLastMeasuredCenter() const { return last_measured_center_; }
+
+    const cv::Point2f &GetLastKfPredCenter() const { return last_kf_pred_center_; }
+
+    const cv::Point2f &GetLastKfCorrectedCenter() const { return last_kf_corrected_center_; }
+
+    float GetLastKfInnov() const { return last_kf_innov_; }
+
+    float GetLastKfInnovThresh() const { return last_kf_innov_thresh_; }
+
+    float GetSearchScaleFactor() const { return search_scale_factor_; }
+
     const CsrtParams &GetParams() const { return params_; }
 
 private:
     cv::Mat CalculateResponse(const cv::Mat &image, const std::vector<cv::Mat> &filter);
-    void UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask);
-    void UpdateHistograms(const cv::Mat &image, const cv::Rect &region);
+    void UpdateCsrFilter(const cv::Mat &image, const cv::Mat &mask, float lr_scale);
+    void UpdateHistograms(const cv::Mat &image, const cv::Rect &region, float lr_scale);
     void ExtractHistograms(const cv::Mat &image, cv::Rect region, Histogram &hf, Histogram &hb);
     std::vector<cv::Mat> CreateCsrFilter(const std::vector<cv::Mat> &img_features,
         const cv::Mat &yf, const cv::Mat &mask);
@@ -124,9 +161,18 @@ private:
     float last_peak_ = 0.0f;
     float last_apce_ = 0.0f;
     float last_apce_norm_ = 0.0f;
+    float last_apce_mean_ = 0.0f;
+    float init_apce_ = 0.0f;
+    bool last_apce_valid_ = false;
     float last_kf_trace_ = 0.0f;
     float last_kf_uncert_ = 0.0f;
+    float last_kf_r_ = 0.0f;
+    float last_kf_innov_ = 0.0f;
+    float last_kf_innov_thresh_ = 0.0f;
     bool last_measurement_accepted_ = true;
+    cv::Point2f last_measured_center_{0.0f, 0.0f};
+    cv::Point2f last_kf_pred_center_{0.0f, 0.0f};
+    cv::Point2f last_kf_corrected_center_{0.0f, 0.0f};
 
     cv::KalmanFilter kf_;
     bool kf_initialized_ = false;

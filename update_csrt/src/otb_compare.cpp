@@ -25,6 +25,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
+const std::vector<std::string> kDebugSequences = {"Car4", "BlurCar1", "Football1", "Deer"};
+
 struct BoundingBox {
     double x{0.0};
     double y{0.0};
@@ -82,6 +84,17 @@ void PrintUsage() {
     std::cout << "  --output <csv>       Output CSV file (default: auc_compare.csv)\n";
     std::cout << "  --max-frames <n>     Limit frames per sequence\n";
     std::cout << "  --pure-csv <csv>     Load OpenCV CSRT baseline from CSV (optional, for fast mode)\n";
+    std::cout << "  --kf-mode <n>        KF/CSRT fusion mode (1,2,3)\n";
+    std::cout << "  --kf-prior-mode <n>  KF prior mode (0=always,1=prev-PSR low)\n";
+    std::cout << "  --model-lr-mode <n>  Model update mode (0=always,1=psr,2=psr-soft,3=psr+innov)\n";
+    std::cout << "  --psr-th <val>       PSR threshold for gating (default: 0.035)\n";
+    std::cout << "  --kf-r-min <val>     KF measurement noise min\n";
+    std::cout << "  --kf-r-max <val>     KF measurement noise max\n";
+    std::cout << "  --kf-q-pos <val>     KF process noise (position)\n";
+    std::cout << "  --kf-q-vel <val>     KF process noise (velocity)\n";
+    std::cout << "  --kf-innov-hard <v>  KF innovation threshold scale\n";
+    std::cout << "  --search-scale-max <val>  Max search scale factor\n";
+    std::cout << "  --threads <n>        Override number of worker threads\n";
     std::cout << "  --help               Show this help\n";
     std::cout << "\nDefault: Run both update_csrt and OpenCV CSRT for comparison\n";
 }
@@ -440,7 +453,8 @@ TrackerMetrics MetricsFromBaseline(const BaselineMetrics &baseline) {
     return metrics;
 }
 
-TrackerMetrics EvaluateUpdateOnly(const SequenceData &data, const std::optional<int> &max_frames) {
+TrackerMetrics EvaluateUpdateOnly(const SequenceData &data, const csrt::CsrtParams &params,
+    const std::optional<int> &max_frames) {
     TrackerMetrics metrics;
     if (data.frames.empty() || data.ground_truth.empty()) {
         return metrics;
@@ -458,7 +472,7 @@ TrackerMetrics EvaluateUpdateOnly(const SequenceData &data, const std::optional<
         static_cast<int>(std::round(init_box.width)),
         static_cast<int>(std::round(init_box.height)));
 
-    csrt::CsrtTracker update_tracker;
+    csrt::CsrtTracker update_tracker(params);
     if (!update_tracker.Init(first, init_rect)) {
         return metrics;
     }
@@ -503,7 +517,8 @@ TrackerMetrics EvaluateUpdateOnly(const SequenceData &data, const std::optional<
     return ComputeMetrics(ious_update, errors_update, update_seconds);
 }
 
-TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optional<int> &max_frames) {
+TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const csrt::CsrtParams &params,
+    const std::optional<int> &max_frames) {
     TrackerPairMetrics metrics;
     if (data.frames.empty() || data.ground_truth.empty()) {
         return metrics;
@@ -521,7 +536,7 @@ TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optiona
         static_cast<int>(std::round(init_box.width)),
         static_cast<int>(std::round(init_box.height)));
 
-    csrt::CsrtTracker update_tracker;
+    csrt::CsrtTracker update_tracker(params);
     if (!update_tracker.Init(first, init_rect)) {
         return metrics;
     }
@@ -532,6 +547,22 @@ TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optiona
     const std::size_t limit = max_frames
         ? std::min<std::size_t>(*max_frames, data.frames.size())
         : data.frames.size();
+
+    const bool debug_sequence = std::find(kDebugSequences.begin(), kDebugSequences.end(),
+        data.name) != kDebugSequences.end();
+    std::ofstream debug_out;
+    if (debug_sequence) {
+        fs::path debug_path = fs::path("update_csrt") / ("debug_" + data.name + ".csv");
+        debug_out.open(debug_path);
+        if (debug_out.is_open()) {
+            debug_out << "frame,gt_x,gt_y,gt_w,gt_h,"
+                      << "upd_x,upd_y,upd_w,upd_h,upd_iou,upd_err,"
+                      << "pure_x,pure_y,pure_w,pure_h,pure_iou,pure_err,"
+                      << "apce,apce_norm,kf_trace,kf_uncert,kf_r,accept,"
+                      << "meas_x,meas_y,kf_pred_x,kf_pred_y,kf_corr_x,kf_corr_y,"
+                      << "innov,innov_thresh,search_scale\n";
+        }
+    }
 
     std::vector<double> ious_update;
     std::vector<double> errors_update;
@@ -584,6 +615,37 @@ TrackerPairMetrics EvaluateTrackers(const SequenceData &data, const std::optiona
         ious_pure.push_back(iou_pure);
         errors_update.push_back(error_update);
         errors_pure.push_back(error_pure);
+
+        if (debug_out.is_open()) {
+            debug_out << i << ","
+                      << gt.x << "," << gt.y << "," << gt.width << "," << gt.height << ","
+                      << (pred_update ? pred_update->x : 0.0) << ","
+                      << (pred_update ? pred_update->y : 0.0) << ","
+                      << (pred_update ? pred_update->width : 0.0) << ","
+                      << (pred_update ? pred_update->height : 0.0) << ","
+                      << iou_update << "," << error_update << ","
+                      << (pred_pure ? pred_pure->x : 0.0) << ","
+                      << (pred_pure ? pred_pure->y : 0.0) << ","
+                      << (pred_pure ? pred_pure->width : 0.0) << ","
+                      << (pred_pure ? pred_pure->height : 0.0) << ","
+                      << iou_pure << "," << error_pure << ","
+                      << update_tracker.GetLastApce() << ","
+                      << update_tracker.GetLastApceNorm() << ","
+                      << update_tracker.GetLastKfTrace() << ","
+                      << update_tracker.GetLastKfUncert() << ","
+                      << update_tracker.GetLastKfR() << ","
+                      << (update_tracker.GetLastMeasurementAccepted() ? 1 : 0) << ","
+                      << update_tracker.GetLastMeasuredCenter().x << ","
+                      << update_tracker.GetLastMeasuredCenter().y << ","
+                      << update_tracker.GetLastKfPredCenter().x << ","
+                      << update_tracker.GetLastKfPredCenter().y << ","
+                      << update_tracker.GetLastKfCorrectedCenter().x << ","
+                      << update_tracker.GetLastKfCorrectedCenter().y << ","
+                      << update_tracker.GetLastKfInnov() << ","
+                      << update_tracker.GetLastKfInnovThresh() << ","
+                      << update_tracker.GetSearchScaleFactor()
+                      << "\n";
+        }
     }
 
     metrics.update = ComputeMetrics(ious_update, errors_update, update_seconds);
@@ -627,6 +689,17 @@ int main(int argc, char **argv) {
     fs::path output_path = "auc_compare.csv";  // Write to current directory
     std::optional<int> max_frames;
     std::optional<fs::path> pure_csv_path = std::nullopt;  // Default: run both trackers
+    int kf_mode = 1;
+    int kf_prior_mode = 0;
+    int model_lr_mode = 1;
+    std::optional<unsigned int> thread_override;
+    std::optional<float> psr_threshold_override;
+    std::optional<float> kf_r_min_override;
+    std::optional<float> kf_r_max_override;
+    std::optional<float> kf_q_pos_override;
+    std::optional<float> kf_q_vel_override;
+    std::optional<float> kf_innov_hard_override;
+    std::optional<float> search_scale_max_override;
 
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -638,6 +711,28 @@ int main(int argc, char **argv) {
             max_frames = std::stoi(argv[++i]);
         } else if (arg == "--pure-csv" && i + 1 < argc) {
             pure_csv_path = argv[++i];
+        } else if (arg == "--kf-mode" && i + 1 < argc) {
+            kf_mode = std::stoi(argv[++i]);
+        } else if (arg == "--kf-prior-mode" && i + 1 < argc) {
+            kf_prior_mode = std::stoi(argv[++i]);
+        } else if (arg == "--model-lr-mode" && i + 1 < argc) {
+            model_lr_mode = std::stoi(argv[++i]);
+        } else if (arg == "--psr-th" && i + 1 < argc) {
+            psr_threshold_override = std::stof(argv[++i]);
+        } else if (arg == "--kf-r-min" && i + 1 < argc) {
+            kf_r_min_override = std::stof(argv[++i]);
+        } else if (arg == "--kf-r-max" && i + 1 < argc) {
+            kf_r_max_override = std::stof(argv[++i]);
+        } else if (arg == "--kf-q-pos" && i + 1 < argc) {
+            kf_q_pos_override = std::stof(argv[++i]);
+        } else if (arg == "--kf-q-vel" && i + 1 < argc) {
+            kf_q_vel_override = std::stof(argv[++i]);
+        } else if (arg == "--kf-innov-hard" && i + 1 < argc) {
+            kf_innov_hard_override = std::stof(argv[++i]);
+        } else if (arg == "--search-scale-max" && i + 1 < argc) {
+            search_scale_max_override = std::stof(argv[++i]);
+        } else if (arg == "--threads" && i + 1 < argc) {
+            thread_override = static_cast<unsigned int>(std::stoul(argv[++i]));
         } else if (arg == "--help") {
             PrintUsage();
             return 0;
@@ -648,6 +743,47 @@ int main(int argc, char **argv) {
         std::cerr << "Dataset root not found: " << dataset_root << "\n";
         PrintUsage();
         return 1;
+    }
+
+    if (kf_mode < 1 || kf_mode > 3) {
+        std::cerr << "Invalid --kf-mode: " << kf_mode << " (expected 1,2,3)\n";
+        return 1;
+    }
+
+    if (kf_prior_mode < 0 || kf_prior_mode > 1) {
+        std::cerr << "Invalid --kf-prior-mode: " << kf_prior_mode << " (expected 0 or 1)\n";
+        return 1;
+    }
+
+    if (model_lr_mode < 0 || model_lr_mode > 3) {
+        std::cerr << "Invalid --model-lr-mode: " << model_lr_mode << " (expected 0..3)\n";
+        return 1;
+    }
+
+    csrt::CsrtParams params;
+    params.kf_mode = kf_mode;
+    params.kf_prior_mode = kf_prior_mode;
+    params.model_lr_mode = model_lr_mode;
+    if (psr_threshold_override) {
+        params.psr_threshold = *psr_threshold_override;
+    }
+    if (kf_r_min_override) {
+        params.kf_r_min = *kf_r_min_override;
+    }
+    if (kf_r_max_override) {
+        params.kf_r_max = *kf_r_max_override;
+    }
+    if (kf_q_pos_override) {
+        params.kf_q_pos = *kf_q_pos_override;
+    }
+    if (kf_q_vel_override) {
+        params.kf_q_vel = *kf_q_vel_override;
+    }
+    if (kf_innov_hard_override) {
+        params.kf_innov_hard_scale = *kf_innov_hard_override;
+    }
+    if (search_scale_max_override) {
+        params.search_scale_max = *search_scale_max_override;
     }
 
     const auto sequences = LoadSequences(dataset_root);
@@ -708,9 +844,20 @@ int main(int argc, char **argv) {
     std::size_t total_frames = 0;
 
     std::cout << "Comparing trackers on " << sequences.size() << " sequence(s)...\n";
+    std::cout << "KF mode: " << kf_mode << "\n";
+    std::cout << "KF prior mode: " << kf_prior_mode << "\n";
+    std::cout << "Model LR mode: " << model_lr_mode << "\n";
+    std::cout << "PSR th: " << params.psr_threshold
+              << " | KF R: [" << params.kf_r_min << ", " << params.kf_r_max << "]"
+              << " | KF Q: [" << params.kf_q_pos << ", " << params.kf_q_vel << "]"
+              << " | KF innov hard: " << params.kf_innov_hard_scale
+              << " | search_scale_max: " << params.search_scale_max << "\n";
 
     // Parallel processing
-    const unsigned int num_threads = std::thread::hardware_concurrency();
+    unsigned int num_threads = thread_override.value_or(std::thread::hardware_concurrency());
+    if (num_threads == 0) {
+        num_threads = 1;
+    }
     std::cout << "Using " << num_threads << " threads for parallel processing\n\n";
     
     std::vector<TrackerPairMetrics> all_metrics(sequences.size());
@@ -727,11 +874,11 @@ int main(int argc, char **argv) {
             }
             
             if (baseline) {
-                all_metrics[i].update = EvaluateUpdateOnly(seq, max_frames);
+                all_metrics[i].update = EvaluateUpdateOnly(seq, params, max_frames);
                 const auto &base_metrics = baseline->per_sequence.at(seq.name);
                 all_metrics[i].pure = MetricsFromBaseline(base_metrics);
             } else {
-                all_metrics[i] = EvaluateTrackers(seq, max_frames);
+                all_metrics[i] = EvaluateTrackers(seq, params, max_frames);
             }
         }
     };
